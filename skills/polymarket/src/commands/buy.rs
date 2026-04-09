@@ -172,25 +172,23 @@ pub async fn run(
 }
 
 /// Resolve (condition_id, token_id, neg_risk) from a market_id and outcome string.
+/// Supports any outcome label (e.g. "yes", "no", "trump", "republican", "option-a").
 pub async fn resolve_market_token(
     client: &Client,
     market_id: &str,
     outcome: &str,
 ) -> Result<(String, String, bool)> {
+    let outcome_lower = outcome.to_lowercase();
     if market_id.starts_with("0x") || market_id.starts_with("0X") {
         let market = get_clob_market(client, market_id).await?;
-        let is_yes = outcome.to_lowercase() == "yes";
         let token = market
             .tokens
             .iter()
-            .find(|t| {
-                if is_yes {
-                    t.outcome.to_lowercase() == "yes"
-                } else {
-                    t.outcome.to_lowercase() == "no"
-                }
-            })
-            .ok_or_else(|| anyhow::anyhow!("Could not find {} token in market", outcome))?;
+            .find(|t| t.outcome.to_lowercase() == outcome_lower)
+            .ok_or_else(|| {
+                let available: Vec<&str> = market.tokens.iter().map(|t| t.outcome.as_str()).collect();
+                anyhow::anyhow!("Outcome '{}' not found. Available outcomes: {:?}", outcome, available)
+            })?;
         Ok((market.condition_id.clone(), token.token_id.clone(), market.neg_risk))
     } else {
         let gamma = crate::api::get_gamma_market_by_slug(client, market_id).await?;
@@ -200,17 +198,12 @@ pub async fn resolve_market_token(
             .ok_or_else(|| anyhow::anyhow!("No condition_id in Gamma market response"))?;
         let token_ids = gamma.token_ids();
         let outcomes = gamma.outcome_list();
-        let is_yes = outcome.to_lowercase() == "yes";
         let idx = outcomes
             .iter()
-            .position(|o| {
-                if is_yes {
-                    o.to_lowercase() == "yes"
-                } else {
-                    o.to_lowercase() == "no"
-                }
-            })
-            .ok_or_else(|| anyhow::anyhow!("Could not find {} outcome in market", outcome))?;
+            .position(|o| o.to_lowercase() == outcome_lower)
+            .ok_or_else(|| {
+                anyhow::anyhow!("Outcome '{}' not found. Available outcomes: {:?}", outcome, outcomes)
+            })?;
         let token_id = token_ids
             .get(idx)
             .cloned()

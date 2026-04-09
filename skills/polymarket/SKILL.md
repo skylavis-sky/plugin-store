@@ -1,6 +1,6 @@
 ---
 name: polymarket
-description: "Trade prediction markets on Polymarket - buy YES/NO outcome tokens, check positions, list markets, and manage orders on Polygon. Trigger phrases: buy polymarket shares, sell polymarket position, check my polymarket positions, list polymarket markets, get polymarket market, cancel polymarket order, polymarket yes token, polymarket no token, prediction market trade, polymarket price."
+description: "Trade prediction markets on Polymarket - buy outcome tokens (YES/NO and categorical markets), check positions, list markets, and manage orders on Polygon. Trigger phrases: buy polymarket shares, sell polymarket position, check my polymarket positions, list polymarket markets, get polymarket market, cancel polymarket order, polymarket yes token, polymarket no token, prediction market trade, polymarket price."
 version: "0.1.0"
 author: "skylavis-sky"
 tags:
@@ -11,77 +11,6 @@ tags:
   - defi
   - clob
 ---
-
-
-## Pre-flight Dependencies (auto-injected by Plugin Store CI)
-
-> Run once per session before first use. These checks ensure required tools are installed.
-
-### Install onchainos CLI + Skills (auto-injected)
-
-```bash
-# 1. Install onchainos CLI
-onchainos --version 2>/dev/null || curl -fsSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
-
-# 2. Install onchainos skills (enables AI agent to use onchainos commands)
-npx skills add okx/onchainos-skills --yes --global
-
-# 3. Install plugin-store skills (enables plugin discovery and management)
-npx skills add okx/plugin-store --skill plugin-store --yes --global
-```
-
-### Install polymarket binary (auto-injected)
-
-```bash
-if ! command -v polymarket >/dev/null 2>&1; then
-  OS=$(uname -s | tr A-Z a-z)
-  ARCH=$(uname -m)
-  EXT=""
-  case "${OS}_${ARCH}" in
-    darwin_arm64)  TARGET="aarch64-apple-darwin" ;;
-    darwin_x86_64) TARGET="x86_64-apple-darwin" ;;
-    linux_x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
-    linux_i686)    TARGET="i686-unknown-linux-gnu" ;;
-    linux_aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
-    linux_armv7l)  TARGET="armv7-unknown-linux-gnueabihf" ;;
-    mingw*_x86_64|msys*_x86_64|cygwin*_x86_64)   TARGET="x86_64-pc-windows-msvc"; EXT=".exe" ;;
-    mingw*_i686|msys*_i686|cygwin*_i686)           TARGET="i686-pc-windows-msvc"; EXT=".exe" ;;
-    mingw*_aarch64|msys*_aarch64|cygwin*_aarch64)  TARGET="aarch64-pc-windows-msvc"; EXT=".exe" ;;
-  esac
-  mkdir -p ~/.local/bin
-  curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/polymarket@0.1.0/polymarket-${TARGET}${EXT}" -o ~/.local/bin/polymarket${EXT}
-  chmod +x ~/.local/bin/polymarket${EXT}
-fi
-```
-
-### Report install (auto-injected, runs once)
-
-```bash
-REPORT_FLAG="$HOME/.plugin-store/reported/polymarket"
-if [ ! -f "$REPORT_FLAG" ]; then
-  mkdir -p "$HOME/.plugin-store/reported"
-  # Device fingerprint → SHA256 → 32-char device ID
-  DEV_RAW="$(hostname):$(uname -s):$(uname -m):$HOME"
-  DEV_ID=$(echo -n "$DEV_RAW" | shasum -a 256 | head -c 32)
-  # HMAC signature (obfuscated key, same as CLI binary)
-  _K=$(echo 'OE9nNWFRUFdfSVJkektrMExOV2RNeTIzV2JibXo3ZWNTbExJUDFIWnVoZw==' | base64 -d 2>/dev/null || echo 'OE9nNWFRUFdfSVJkektrMExOV2RNeTIzV2JibXo3ZWNTbExJUDFIWnVoZw==' | openssl base64 -d)
-  HMAC_SIG=$(echo -n "${_K}${DEV_ID}" | shasum -a 256 | head -c 8)
-  DIV_ID="${DEV_ID}${HMAC_SIG}"
-  unset _K
-  # Report to Vercel stats
-  curl -s -X POST "https://plugin-store-dun.vercel.app/install" \
-    -H "Content-Type: application/json" \
-    -d '{"name":"polymarket","version":"0.1.0"}' >/dev/null 2>&1 || true
-  # Report to OKX API (with HMAC-signed device token)
-  curl -s -X POST "https://www.okx.com/priapi/v1/wallet/plugins/download/report" \
-    -H "Content-Type: application/json" \
-    -d '{"pluginName":"polymarket","divId":"'"$DIV_ID"'"}' >/dev/null 2>&1 || true
-  touch "$REPORT_FLAG"
-fi
-```
-
----
-
 
 # Polymarket Skill
 
@@ -110,7 +39,7 @@ fi
 
 **Source code**: https://github.com/skylavis-sky/onchainos-plugins/tree/main/polymarket (binary built from commit `bc1629f2`)
 
-Polymarket is a prediction market platform on Polygon where users trade YES/NO outcome tokens for real-world events. Each market resolves to $1.00 (winner) or $0.00 (loser) per share. Prices represent implied probabilities (e.g., 0.65 = 65% chance of YES).
+Polymarket is a prediction market platform on Polygon where users trade outcome tokens for real-world events. Markets can be binary (YES/NO) or categorical (multiple outcomes, e.g. "Trump", "Harris", "Other"). Each outcome token resolves to $1.00 (winner) or $0.00 (loser). Prices represent implied probabilities (e.g., 0.65 = 65% chance of that outcome).
 
 **Supported chain:**
 
@@ -193,7 +122,7 @@ polymarket get-market --market-id <id>
 - If `--market-id` starts with `0x`: queries CLOB API directly by condition_id
 - Otherwise: queries Gamma API by slug, then enriches with live order book data
 
-**Output fields:** `question`, `condition_id`, `slug`, `category`, `end_date`, `tokens` (outcome, token_id, price), `volume_24hr`, `liquidity`, `yes_best_bid`, `yes_best_ask`, `yes_last_trade`
+**Output fields:** `question`, `condition_id`, `slug`, `category`, `end_date`, `tokens` (outcome, token_id, price, best_bid, best_ask, last_trade), `volume_24hr`, `liquidity`
 
 **Example:**
 ```
@@ -226,17 +155,17 @@ polymarket get-positions --address 0xAbCd...
 
 ---
 
-### `buy` — Buy YES or NO Shares
+### `buy` — Buy Outcome Shares
 
 ```
-polymarket buy --market-id <id> --outcome <yes|no> --amount <usdc> [--price <0-1>] [--order-type <GTC|FOK>] [--approve]
+polymarket buy --market-id <id> --outcome <outcome> --amount <usdc> [--price <0-1>] [--order-type <GTC|FOK>] [--approve]
 ```
 
 **Flags:**
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--market-id` | Market condition_id or slug | required |
-| `--outcome` | `yes` or `no` | required |
+| `--outcome` | outcome label, case-insensitive (e.g. `yes`, `no`, `trump`, `republican`) | required |
 | `--amount` | USDC.e to spend, e.g. `100` = $100.00 | required |
 | `--price` | Limit price in (0, 1). Omit for market order (FOK) | — |
 | `--order-type` | `GTC` (resting limit) or `FOK` (fill-or-kill) | `GTC` |
@@ -255,22 +184,23 @@ polymarket buy --market-id <id> --outcome <yes|no> --amount <usdc> [--price <0-1
 **Example:**
 ```
 polymarket buy --market-id will-btc-hit-100k-by-2025 --outcome yes --amount 50 --price 0.65
+polymarket buy --market-id presidential-election-winner-2024 --outcome trump --amount 50 --price 0.52
 polymarket buy --market-id 0xabc... --outcome no --amount 100
 ```
 
 ---
 
-### `sell` — Sell YES or NO Shares
+### `sell` — Sell Outcome Shares
 
 ```
-polymarket sell --market-id <id> --outcome <yes|no> --shares <amount> [--price <0-1>] [--order-type <GTC|FOK>] [--approve]
+polymarket sell --market-id <id> --outcome <outcome> --shares <amount> [--price <0-1>] [--order-type <GTC|FOK>] [--approve]
 ```
 
 **Flags:**
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--market-id` | Market condition_id or slug | required |
-| `--outcome` | `yes` or `no` | required |
+| `--outcome` | outcome label, case-insensitive (e.g. `yes`, `no`, `trump`, `republican`) | required |
 | `--shares` | Number of shares to sell, e.g. `250.5` | required |
 | `--price` | Limit price in (0, 1). Omit for market order (FOK) | — |
 | `--order-type` | `GTC` (resting limit) or `FOK` (fill-or-kill) | `GTC` |

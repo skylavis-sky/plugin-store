@@ -15,7 +15,7 @@ use super::buy::resolve_market_token;
 /// Run the sell command.
 ///
 /// market_id: condition_id (0x-prefixed) or slug
-/// outcome: "yes" or "no"
+/// outcome: outcome label, case-insensitive (e.g. "yes", "no", "trump")
 /// shares: number of token shares to sell (human-readable)
 /// price: limit price in [0, 1], or None for market order (FOK)
 pub async fn run(
