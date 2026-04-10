@@ -6,9 +6,8 @@ use crate::api::{
     round_amount_down, round_price, round_size_down, to_token_units, OrderBody, OrderRequest,
 };
 use crate::auth::ensure_credentials;
-use crate::config::{get_or_create_signing_key, signing_key_address};
-use crate::onchainos::{approve_ctf, ensure_operator_approval, get_wallet_address};
-use crate::signing::{sign_order, OrderParams};
+use crate::onchainos::{approve_ctf, get_wallet_address};
+use crate::signing::{sign_order_via_onchainos, OrderParams};
 
 use super::buy::resolve_market_token;
 
@@ -47,11 +46,24 @@ pub async fn run(
 
     let client = Client::new();
 
-    let signing_key = get_or_create_signing_key()?;
-    let signer_addr = signing_key_address(&signing_key);
-    let wallet_addr = get_wallet_address().await?;
-    ensure_operator_approval(&wallet_addr, &signer_addr, false).await?;
-    let creds = ensure_credentials(&client, &signing_key).await?;
+    // onchainos wallet is the signer (approved operator of proxy wallet after polymarket.com onboarding)
+    let signer_addr = get_wallet_address().await?;
+
+    // Derive API credentials for the onchainos wallet
+    let creds = ensure_credentials(&client, &signer_addr).await?;
+
+    // Proxy wallet is the maker (holds outcome tokens, deployed by polymarket.com onboarding)
+    let proxy_wallet = creds.proxy_wallet.as_ref()
+        .ok_or_else(|| anyhow::anyhow!(
+            "No Polymarket proxy wallet found for {}.\n\
+            Complete the one-time account setup first:\n\
+            1. Go to https://polymarket.com\n\
+            2. Connect wallet {}\n\
+            3. Complete account setup (Polymarket deploys your proxy wallet)\n\
+            4. Run this command again",
+            signer_addr, signer_addr
+        ))?
+        .clone();
 
     let (condition_id, token_id, neg_risk) = resolve_market_token(&client, market_id, outcome).await?;
 
@@ -101,7 +113,6 @@ pub async fn run(
     let rounded_shares = round_size_down(share_amount);
     let maker_amount_raw = to_token_units(rounded_shares); // shares to sell
 
-    // taker_amount = shares * price (USDC.e to receive)
     let usdc_out = rounded_shares * limit_price;
     let rounded_usdc = round_amount_down(usdc_out, tick_size);
     let taker_amount_raw = to_token_units(rounded_usdc);
@@ -110,8 +121,8 @@ pub async fn run(
 
     let params = OrderParams {
         salt,
-        maker: wallet_addr.clone(),
-        signer: signer_addr.clone(),
+        maker: proxy_wallet.clone(),  // proxy wallet holds outcome tokens
+        signer: signer_addr.clone(),  // onchainos wallet signs (approved operator)
         taker: "0x0000000000000000000000000000000000000000".to_string(),
         token_id: token_id.clone(),
         maker_amount: maker_amount_raw,
@@ -123,11 +134,11 @@ pub async fn run(
         signature_type: 0,
     };
 
-    let signature = sign_order(&signing_key, &params, neg_risk)?;
+    let signature = sign_order_via_onchainos(&params, neg_risk).await?;
 
     let order_body = OrderBody {
         salt: salt.to_string(),
-        maker: wallet_addr.clone(),
+        maker: proxy_wallet.clone(),
         signer: signer_addr.clone(),
         taker: "0x0000000000000000000000000000000000000000".to_string(),
         token_id: token_id.clone(),
