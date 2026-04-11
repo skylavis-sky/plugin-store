@@ -297,6 +297,14 @@ For Arbitrum One (42161): WETH `0x82aF49447D8a07e3bd95BD0d56f35241523fBab1`, USD
 
 ## Changelog
 
+### v0.2.2 (2026-04-11)
+
+- **fix**: Add `wait_and_check_receipt` — polls `eth_getTransactionReceipt` after every swap/addLiquidity/removeLiquidity broadcast and returns an error if the transaction reverts on-chain (status=0x0). Previously, on-chain reverts were silently reported as success.
+- **fix**: Propagate `ok:false` from `onchainos wallet contract-call` as an immediate error. Previously, simulation rejections produced a `"pending"` tx hash that appeared as a soft success.
+- **fix**: Input validation guards — bail before any network calls for: both amounts zero (`add-liquidity`), zero `amount-in` (`swap`, `quote`), same token in/out (`swap`, `quote`). Previously, zero-amount swaps hit the chain and returned raw RPC error JSON; same-token quotes silently returned a money-losing round-trip route (e.g. USDT→WBNB→USDT).
+- **fix**: `api_calls` entries in `plugin.yaml` use domain-only format (no `https://` prefix) to pass CI lint.
+- **fix**: `plugin.json` includes required `author` and `license` fields.
+
 ### v0.2.1 (2026-04-11)
 
 - **fix**: Arbitrum RPC URL updated from `arb1.arbitrum.io/rpc` to `arbitrum-one-rpc.publicnode.com` for consistency with BSC/Base (both use publicnode endpoints)
