@@ -98,8 +98,8 @@ pub async fn run(args: AddLiquidityArgs) -> anyhow::Result<()> {
     if !args.dry_run {
         let allowance_a = get_allowance(&token_a, &recipient, router, rpc).await?;
         if allowance_a < amount_a_desired {
-            println!("Approving tokenA ({}) for Router...", token_a);
-            let approve_data = build_approve_calldata(router, u128::MAX);
+            println!("Approving tokenA ({}) for Router (exact amount: {})...", token_a, amount_a_desired);
+            let approve_data = build_approve_calldata(router, amount_a_desired);
             let res = wallet_contract_call(CHAIN_ID, &token_a, &approve_data, args.confirm, false).await?;
             println!("Approve tokenA tx: {}", extract_tx_hash(&res));
             sleep(Duration::from_secs(5)).await;
@@ -108,8 +108,8 @@ pub async fn run(args: AddLiquidityArgs) -> anyhow::Result<()> {
         // --- 5. Approve token B if needed ---
         let allowance_b = get_allowance(&token_b, &recipient, router, rpc).await?;
         if allowance_b < amount_b_desired {
-            println!("Approving tokenB ({}) for Router...", token_b);
-            let approve_data = build_approve_calldata(router, u128::MAX);
+            println!("Approving tokenB ({}) for Router (exact amount: {})...", token_b, amount_b_desired);
+            let approve_data = build_approve_calldata(router, amount_b_desired);
             let res = wallet_contract_call(CHAIN_ID, &token_b, &approve_data, args.confirm, false).await?;
             println!("Approve tokenB tx: {}", extract_tx_hash(&res));
             sleep(Duration::from_secs(5)).await;

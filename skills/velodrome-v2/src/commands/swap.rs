@@ -95,8 +95,8 @@ pub async fn run(args: SwapArgs) -> anyhow::Result<()> {
     if !args.dry_run {
         let allowance = get_allowance(&token_in, &recipient, router, rpc).await?;
         if allowance < amount_in {
-            println!("Approving {} for Router...", token_in);
-            let approve_data = build_approve_calldata(router, u128::MAX);
+            println!("Approving {} for Router (exact amount: {})...", token_in, amount_in);
+            let approve_data = build_approve_calldata(router, amount_in);
             let approve_result =
                 wallet_contract_call(CHAIN_ID, &token_in, &approve_data, args.confirm, false).await?;
             println!("Approve tx: {}", extract_tx_hash(&approve_result));

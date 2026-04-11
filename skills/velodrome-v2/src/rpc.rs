@@ -31,6 +31,9 @@ pub async fn eth_call(to: &str, data: &str, rpc_url: &str) -> anyhow::Result<Str
 /// Check ERC-20 allowance.
 /// allowance(address owner, address spender) -> uint256
 /// Selector: 0xdd62ed3e
+///
+/// Returns u128::MAX if the on-chain allowance exceeds u128::MAX (e.g. uint256.max
+/// set by another tool), so callers treat it as "already approved for any amount".
 pub async fn get_allowance(
     token: &str,
     owner: &str,
@@ -42,6 +45,14 @@ pub async fn get_allowance(
     let data = format!("0xdd62ed3e{}{}", owner_padded, spender_padded);
     let hex = eth_call(token, &data, rpc_url).await?;
     let clean = hex.trim_start_matches("0x");
+    // If the upper 128 bits (first 32 hex chars of 64-char word) are non-zero,
+    // the allowance exceeds u128::MAX â treat as unlimited so we skip re-approval.
+    if clean.len() == 64 {
+        let high = &clean[..32];
+        if high.chars().any(|c| c != '0') {
+            return Ok(u128::MAX);
+        }
+    }
     let trimmed = if clean.len() > 32 { &clean[clean.len() - 32..] } else { clean };
     Ok(u128::from_str_radix(trimmed, 16).unwrap_or(0))
 }

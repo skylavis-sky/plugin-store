@@ -445,4 +445,5 @@ For any other token, pass the hex address directly.
 - Never share your private key or seed phrase
 - This plugin routes all blockchain operations through `onchainos` (TEE-sandboxed signing)
 - Always verify transaction amounts and addresses before confirming
+- **Token approvals**: this plugin approves only the exact amount required for each operation (not unlimited). A separate approval transaction is sent before each swap/add-liquidity if your current allowance is insufficient.
 - DeFi protocols carry smart contract risk — only use funds you can afford to lose
