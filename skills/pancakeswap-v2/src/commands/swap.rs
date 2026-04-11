@@ -40,6 +40,13 @@ pub async fn run(args: SwapArgs) -> Result<serde_json::Value> {
         resolve_token_address(&token_out_sym, args.chain_id)
     };
 
+    if token_in_addr == token_out_addr {
+        anyhow::bail!("tokenIn and tokenOut must be different tokens.");
+    }
+    if args.amount_in == 0 {
+        anyhow::bail!("Amount must be greater than 0.");
+    }
+
     // Resolve wallet
     let wallet = if args.dry_run {
         "0x0000000000000000000000000000000000000000".to_string()

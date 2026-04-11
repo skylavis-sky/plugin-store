@@ -30,6 +30,9 @@ pub async fn run(args: AddLiquidityArgs) -> Result<serde_json::Value> {
     if native_a && native_b {
         anyhow::bail!("Cannot add liquidity with two native tokens.");
     }
+    if args.amount_a == 0 && args.amount_b == 0 {
+        anyhow::bail!("Both amounts are zero — provide at least one non-zero amount.");
+    }
 
     // Resolve wallet
     let wallet = if args.dry_run {
