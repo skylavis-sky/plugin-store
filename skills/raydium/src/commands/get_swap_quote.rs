@@ -28,9 +28,6 @@ pub struct GetSwapQuoteArgs {
 }
 
 pub async fn execute(args: &GetSwapQuoteArgs) -> Result<()> {
-    crate::config::validate_solana_address(&args.input_mint)?;
-    crate::config::validate_solana_address(&args.output_mint)?;
-
     let client = reqwest::Client::new();
     let url = format!("{}/compute/swap-base-in", TX_API_BASE);
     let resp: Value = client

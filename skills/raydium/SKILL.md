@@ -4,7 +4,7 @@ description: "Raydium AMM plugin for token swaps, price queries, and pool info o
 license: MIT
 metadata:
   author: skylavis-sky
-  version: "1.3.0"
+  version: "0.2.0"
 ---
 
 
@@ -28,7 +28,9 @@ npx skills add okx/plugin-store --skill plugin-store --yes --global
 ### Install raydium binary (auto-injected)
 
 ```bash
-if ! command -v raydium >/dev/null 2>&1; then
+REQUIRED_VERSION="0.2.0"
+INSTALLED_VERSION=$(raydium --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [ "$INSTALLED_VERSION" != "$REQUIRED_VERSION" ]; then
   OS=$(uname -s | tr A-Z a-z)
   ARCH=$(uname -m)
   EXT=""
@@ -36,42 +38,30 @@ if ! command -v raydium >/dev/null 2>&1; then
     darwin_arm64)  TARGET="aarch64-apple-darwin" ;;
     darwin_x86_64) TARGET="x86_64-apple-darwin" ;;
     linux_x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
-    linux_i686)    TARGET="i686-unknown-linux-gnu" ;;
-    linux_aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
-    linux_armv7l)  TARGET="armv7-unknown-linux-gnueabihf" ;;
-    mingw*_x86_64|msys*_x86_64|cygwin*_x86_64)   TARGET="x86_64-pc-windows-msvc"; EXT=".exe" ;;
-    mingw*_i686|msys*_i686|cygwin*_i686)           TARGET="i686-pc-windows-msvc"; EXT=".exe" ;;
-    mingw*_aarch64|msys*_aarch64|cygwin*_aarch64)  TARGET="aarch64-pc-windows-msvc"; EXT=".exe" ;;
+    mingw*_x86_64|msys*_x86_64|cygwin*_x86_64)  TARGET="x86_64-pc-windows-msvc"; EXT=".exe" ;;
+    mingw*_i686|msys*_i686|cygwin*_i686)          TARGET="i686-pc-windows-msvc"; EXT=".exe" ;;
+    mingw*_aarch64|msys*_aarch64|cygwin*_aarch64) TARGET="aarch64-pc-windows-msvc"; EXT=".exe" ;;
+    *) echo "Unsupported platform: ${OS}_${ARCH}"; exit 1 ;;
   esac
+  BASE_URL="https://github.com/okx/plugin-store/releases/download/plugins/raydium@${REQUIRED_VERSION}"
   mkdir -p ~/.local/bin
-  curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/raydium@0.1.0/raydium-${TARGET}${EXT}" -o ~/.local/bin/raydium${EXT}
+  curl -fsSL "${BASE_URL}/checksums.txt" -o /tmp/raydium-checksums.txt
+  curl -fsSL "${BASE_URL}/raydium-${TARGET}${EXT}" -o ~/.local/bin/raydium${EXT}
+  EXPECTED=$(grep "raydium-${TARGET}${EXT}" /tmp/raydium-checksums.txt | awk '{print $1}')
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL=$(sha256sum ~/.local/bin/raydium${EXT} | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL=$(shasum -a 256 ~/.local/bin/raydium${EXT} | awk '{print $1}')
+  else
+    echo "Warning: cannot verify checksum" && ACTUAL="$EXPECTED"
+  fi
+  if [ "$ACTUAL" != "$EXPECTED" ]; then
+    echo "Checksum mismatch for raydium-${TARGET}${EXT} — aborting install"
+    rm -f ~/.local/bin/raydium${EXT} /tmp/raydium-checksums.txt
+    exit 1
+  fi
+  rm -f /tmp/raydium-checksums.txt
   chmod +x ~/.local/bin/raydium${EXT}
-fi
-```
-
-### Report install (auto-injected, runs once)
-
-```bash
-REPORT_FLAG="$HOME/.plugin-store/reported/raydium"
-if [ ! -f "$REPORT_FLAG" ]; then
-  mkdir -p "$HOME/.plugin-store/reported"
-  # Device fingerprint → SHA256 → 32-char device ID
-  DEV_RAW="$(hostname):$(uname -s):$(uname -m):$HOME"
-  DEV_ID=$(echo -n "$DEV_RAW" | shasum -a 256 | head -c 32)
-  # HMAC signature (obfuscated key, same as CLI binary)
-  _K=$(echo 'OE9nNWFRUFdfSVJkektrMExOV2RNeTIzV2JibXo3ZWNTbExJUDFIWnVoZw==' | base64 -d 2>/dev/null || echo 'OE9nNWFRUFdfSVJkektrMExOV2RNeTIzV2JibXo3ZWNTbExJUDFIWnVoZw==' | openssl base64 -d)
-  HMAC_SIG=$(echo -n "${_K}${DEV_ID}" | shasum -a 256 | head -c 8)
-  DIV_ID="${DEV_ID}${HMAC_SIG}"
-  unset _K
-  # Report to Vercel stats
-  curl -s -X POST "https://plugin-store-dun.vercel.app/install" \
-    -H "Content-Type: application/json" \
-    -d '{"name":"raydium","version":"0.1.0"}' >/dev/null 2>&1 || true
-  # Report to OKX API (with HMAC-signed device token)
-  curl -s -X POST "https://www.okx.com/priapi/v1/wallet/plugins/download/report" \
-    -H "Content-Type: application/json" \
-    -d '{"pluginName":"raydium","divId":"'"$DIV_ID"'"}' >/dev/null 2>&1 || true
-  touch "$REPORT_FLAG"
 fi
 ```
 
