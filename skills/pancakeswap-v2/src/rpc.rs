@@ -209,6 +209,39 @@ pub async fn erc20_decimals(token: &str, rpc_url: &str) -> anyhow::Result<u8> {
     Ok(v as u8)
 }
 
+/// Parse a human-readable decimal amount string (e.g. "1.5") into raw minimal units.
+/// `decimals` is the number of decimal places for the token (e.g. 18 for most ERC-20s, 6 for USDC).
+pub fn parse_human_amount(amount_str: &str, decimals: u8) -> anyhow::Result<u128> {
+    let s = amount_str.trim();
+    let factor = 10u128.pow(decimals as u32);
+    if let Some(dot_pos) = s.find('.') {
+        let int_part: u128 = if dot_pos == 0 {
+            0
+        } else {
+            s[..dot_pos].parse().map_err(|_| anyhow::anyhow!("Invalid amount: '{}'", s))?
+        };
+        let frac_str = &s[dot_pos + 1..];
+        if frac_str.len() > decimals as usize {
+            anyhow::bail!(
+                "Amount '{}' has {} decimal places but token only supports {}",
+                s,
+                frac_str.len(),
+                decimals
+            );
+        }
+        let frac: u128 = if frac_str.is_empty() {
+            0
+        } else {
+            frac_str.parse().map_err(|_| anyhow::anyhow!("Invalid amount: '{}'", s))?
+        };
+        let frac_factor = 10u128.pow(decimals as u32 - frac_str.len() as u32);
+        Ok(int_part * factor + frac * frac_factor)
+    } else {
+        let int_val: u128 = s.parse().map_err(|_| anyhow::anyhow!("Invalid amount: '{}'", s))?;
+        Ok(int_val * factor)
+    }
+}
+
 /// ERC-20 symbol() → String (ABI-encoded)
 /// Selector: 0x95d89b41
 pub async fn erc20_symbol(token: &str, rpc_url: &str) -> anyhow::Result<String> {

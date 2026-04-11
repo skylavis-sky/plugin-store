@@ -50,9 +50,9 @@ enum Commands {
         /// Output token symbol or address
         #[arg(long)]
         token_out: String,
-        /// Amount of tokenIn in minimal units (e.g. 1000000000000000000 for 1 token with 18 dec)
+        /// Human-readable amount of tokenIn (e.g. "1.5" for 1.5 USDC)
         #[arg(long)]
-        amount_in: u128,
+        amount_in: String,
     },
 
     /// Swap tokens via PancakeSwap V2 Router02
@@ -63,9 +63,9 @@ enum Commands {
         /// Output token symbol or address
         #[arg(long)]
         token_out: String,
-        /// Amount of tokenIn in minimal units
+        /// Human-readable amount of tokenIn (e.g. "1.5" for 1.5 USDC)
         #[arg(long)]
-        amount_in: u128,
+        amount_in: String,
     },
 
     /// Add liquidity to a V2 pair (receive LP tokens)
@@ -76,12 +76,12 @@ enum Commands {
         /// Second token symbol or address
         #[arg(long)]
         token_b: String,
-        /// Desired amount of tokenA in minimal units
+        /// Human-readable desired amount of tokenA (e.g. "10" for 10 CAKE)
         #[arg(long)]
-        amount_a: u128,
-        /// Desired amount of tokenB (or native BNB/ETH) in minimal units
+        amount_a: String,
+        /// Human-readable desired amount of tokenB or native BNB/ETH (e.g. "0.05" for 0.05 BNB)
         #[arg(long)]
-        amount_b: u128,
+        amount_b: String,
     },
 
     /// Remove liquidity and withdraw tokens
@@ -92,9 +92,9 @@ enum Commands {
         /// Second token symbol or address
         #[arg(long)]
         token_b: String,
-        /// LP token amount to burn (omit to remove all)
+        /// Human-readable LP token amount to burn (e.g. "1.5"). Omit to remove all.
         #[arg(long)]
-        liquidity: Option<u128>,
+        liquidity: Option<String>,
     },
 
     /// Get the pair contract address for two tokens

@@ -1,7 +1,7 @@
 ---
 name: pancakeswap-v2
 description: "Swap tokens and manage liquidity on PancakeSwap V2 (xyk AMM) on BSC, Base, and Arbitrum. Triggers: swap pancakeswap v2, add/remove liquidity pancake, pcs v2 quote, check pancake pair."
-version: "0.2.2"
+version: "0.2.3"
 author: "skylavis-sky"
 tags:
   - dex
@@ -36,7 +36,9 @@ npx skills add okx/plugin-store --skill plugin-store --yes --global
 ### Install pancakeswap-v2 binary (auto-injected)
 
 ```bash
-if ! command -v pancakeswap-v2 >/dev/null 2>&1; then
+REQUIRED_VERSION="0.2.3"
+INSTALLED_VERSION=$(pancakeswap-v2 --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+if [ "$INSTALLED_VERSION" != "$REQUIRED_VERSION" ]; then
   OS=$(uname -s | tr A-Z a-z)
   ARCH=$(uname -m)
   EXT=""
@@ -52,7 +54,7 @@ if ! command -v pancakeswap-v2 >/dev/null 2>&1; then
     mingw*_aarch64|msys*_aarch64|cygwin*_aarch64)  TARGET="aarch64-pc-windows-msvc"; EXT=".exe" ;;
   esac
   mkdir -p ~/.local/bin
-  curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/pancakeswap-v2@0.2.1/pancakeswap-v2-${TARGET}${EXT}" -o ~/.local/bin/pancakeswap-v2${EXT}
+  curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/pancakeswap-v2@0.2.3/pancakeswap-v2-${TARGET}${EXT}" -o ~/.local/bin/pancakeswap-v2${EXT}
   chmod +x ~/.local/bin/pancakeswap-v2${EXT}
 fi
 ```
@@ -71,7 +73,7 @@ if [ ! -f "$REPORT_FLAG" ]; then
   unset _K
   curl -s -X POST "https://plugin-store-dun.vercel.app/install" \
     -H "Content-Type: application/json" \
-    -d '{"name":"pancakeswap-v2","version":"0.2.1"}' >/dev/null 2>&1 || true
+    -d '{"name":"pancakeswap-v2","version":"0.2.3"}' >/dev/null 2>&1 || true
   curl -s -X POST "https://www.okx.com/priapi/v1/wallet/plugins/download/report" \
     -H "Content-Type: application/json" \
     -d '{"pluginName":"pancakeswap-v2","divId":"'"$DIV_ID"'"}' >/dev/null 2>&1 || true
@@ -145,7 +147,7 @@ Do NOT use for: PancakeSwap V3 swaps (use pancakeswap skill), concentrated liqui
 
 **Usage:**
 ```
-pancakeswap-v2 --chain 56 quote --token-in USDT --token-out CAKE --amount-in 100000000000000000000
+pancakeswap-v2 --chain 56 quote --token-in USDT --token-out CAKE --amount-in 100
 ```
 
 **Parameters:**
@@ -153,7 +155,7 @@ pancakeswap-v2 --chain 56 quote --token-in USDT --token-out CAKE --amount-in 100
 |------|------|-------------|
 | tokenIn | `--token-in` | Input token: symbol (USDT, CAKE, WBNB) or hex address |
 | tokenOut | `--token-out` | Output token: symbol or hex address |
-| amountIn | `--amount-in` | Input amount in minimal units (e.g. 100e18 = 100 tokens for 18-decimal token) |
+| amountIn | `--amount-in` | Human-readable input amount (e.g. "100" for 100 USDT, "1.5" for 1.5 USDC) |
 | chain | `--chain` | Chain ID: 56 (BSC, default), 8453 (Base), or 42161 (Arbitrum) |
 
 **Example output:**
@@ -185,7 +187,7 @@ Read-only operation — no confirmation required.
 
 **Usage:**
 ```
-pancakeswap-v2 --chain 56 swap --token-in USDT --token-out CAKE --amount-in 100000000000000000000
+pancakeswap-v2 --chain 56 swap --token-in USDT --token-out CAKE --amount-in 100
 ```
 
 **Parameters:**
@@ -193,7 +195,7 @@ pancakeswap-v2 --chain 56 swap --token-in USDT --token-out CAKE --amount-in 1000
 |------|------|-------------|
 | tokenIn | `--token-in` | Input token: symbol or address. Use BNB/ETH for native |
 | tokenOut | `--token-out` | Output token: symbol or address |
-| amountIn | `--amount-in` | Input amount in minimal units |
+| amountIn | `--amount-in` | Human-readable input amount (e.g. "100" for 100 USDT, "0.5" for 0.5 BNB) |
 | slippageBps | `--slippage-bps` | Slippage in basis points (default 50 = 0.5%) |
 | deadlineSecs | `--deadline-secs` | Seconds until deadline (default 300) |
 | dryRun | `--dry-run` | Preview calldata only, no broadcast |
@@ -230,10 +232,10 @@ pancakeswap-v2 --chain 56 swap --token-in USDT --token-out CAKE --amount-in 1000
 **Usage:**
 ```
 # Token + Token
-pancakeswap-v2 --chain 56 add-liquidity --token-a CAKE --token-b USDT --amount-a 10000000000000000000 --amount-b 50000000000000000000
+pancakeswap-v2 --chain 56 add-liquidity --token-a CAKE --token-b USDT --amount-a 10 --amount-b 50
 
 # Token + native BNB
-pancakeswap-v2 --chain 56 add-liquidity --token-a CAKE --token-b BNB --amount-a 10000000000000000000 --amount-b 50000000000000000
+pancakeswap-v2 --chain 56 add-liquidity --token-a CAKE --token-b BNB --amount-a 10 --amount-b 0.05
 ```
 
 **Parameters:**
@@ -241,8 +243,8 @@ pancakeswap-v2 --chain 56 add-liquidity --token-a CAKE --token-b BNB --amount-a 
 |------|------|-------------|
 | tokenA | `--token-a` | First token: symbol or address. Use BNB/ETH for native |
 | tokenB | `--token-b` | Second token. Use BNB/ETH for native |
-| amountA | `--amount-a` | Desired amount of tokenA in minimal units |
-| amountB | `--amount-b` | Desired amount of tokenB (or native BNB/ETH) in minimal units |
+| amountA | `--amount-a` | Human-readable desired amount of tokenA (e.g. "10" for 10 CAKE) |
+| amountB | `--amount-b` | Human-readable desired amount of tokenB or native BNB/ETH (e.g. "0.05" for 0.05 BNB) |
 | slippageBps | `--slippage-bps` | Slippage tolerance (default 50 = 0.5%) |
 | dryRun | `--dry-run` | Preview calldata only |
 
@@ -266,7 +268,7 @@ pancakeswap-v2 --chain 56 add-liquidity --token-a CAKE --token-b BNB --amount-a 
 pancakeswap-v2 --chain 56 remove-liquidity --token-a CAKE --token-b USDT
 
 # Remove specific amount
-pancakeswap-v2 --chain 56 remove-liquidity --token-a CAKE --token-b USDT --liquidity 1000000000000000000
+pancakeswap-v2 --chain 56 remove-liquidity --token-a CAKE --token-b USDT --liquidity 1.5
 ```
 
 **Parameters:**
@@ -274,7 +276,7 @@ pancakeswap-v2 --chain 56 remove-liquidity --token-a CAKE --token-b USDT --liqui
 |------|------|-------------|
 | tokenA | `--token-a` | First token |
 | tokenB | `--token-b` | Second token. Use BNB/ETH to receive native |
-| liquidity | `--liquidity` | LP tokens to burn (minimal units). Omit to remove all |
+| liquidity | `--liquidity` | Human-readable LP token amount to burn (e.g. "1.5"). Omit to remove all. |
 | slippageBps | `--slippage-bps` | Slippage tolerance (default 50 = 0.5%) |
 | dryRun | `--dry-run` | Preview only |
 
@@ -359,6 +361,10 @@ For Arbitrum One (42161): WETH `0x82aF49447D8a07e3bd95BD0d56f35241523fBab1`, USD
 ---
 
 ## Changelog
+
+### v0.2.3 (2026-04-11)
+
+- **fix**: `--amount-in`, `--amount-a`, `--amount-b`, and `--liquidity` now accept human-readable decimal amounts (e.g. "1.5" for 1.5 USDC) instead of raw minimal integer units. clap previously rejected decimal input with "invalid digit found in string". Decimals are resolved on-chain via ERC-20 `decimals()` for each token; LP tokens always use 18 decimals.
 
 ### v0.2.1 (2026-04-11)
 

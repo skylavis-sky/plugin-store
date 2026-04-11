@@ -11,7 +11,7 @@ pub struct RemoveLiquidityArgs {
     pub chain_id: u64,
     pub token_a: String,
     pub token_b: String,
-    pub liquidity: Option<u128>,  // LP token amount; None = use full balance
+    pub liquidity: Option<String>,  // human-readable LP token amount (e.g. "1.5"); None = use full balance
     pub slippage_bps: u64,
     pub deadline_secs: u64,
     pub from: Option<String>,
@@ -68,7 +68,11 @@ pub async fn run(args: RemoveLiquidityArgs) -> Result<serde_json::Value> {
         anyhow::bail!("You have no LP tokens for this pair (pair: {}).", pair_addr);
     }
 
-    let liquidity = args.liquidity.unwrap_or(lp_balance);
+    // LP tokens always use 18 decimals on Uniswap V2-style pairs
+    let liquidity = match args.liquidity {
+        Some(ref s) => rpc::parse_human_amount(s, 18)?,
+        None => lp_balance,
+    };
     if liquidity == 0 && !args.dry_run {
         anyhow::bail!("Liquidity amount is zero.");
     }
