@@ -1,7 +1,7 @@
 ---
 name: polymarket
 description: "Trade prediction markets on Polymarket - buy outcome tokens (YES/NO and categorical markets), check positions, list markets, manage orders, and redeem winning tokens on Polygon. Trigger phrases: buy polymarket shares, sell polymarket position, check my polymarket positions, list polymarket markets, get polymarket market, cancel polymarket order, redeem polymarket tokens, polymarket yes token, polymarket no token, prediction market trade, polymarket price, get started with polymarket, just installed polymarket, how do I use polymarket, set up polymarket, polymarket quickstart, new to polymarket, polymarket setup, help me trade on polymarket, place a bet on, buy prediction market, bet on, trade on prediction markets, prediction trading, place a prediction market bet, i want to bet on, <token> up or down, <token> 5m, 5m <token>, <token> 5 min, 5 minute <token> market, <token> 5 minute market, 5m <token> market, <token> 5-minute, 5min <token>, <token> 5min, trade the 5m <token>, play the 5m on <token>, give me the 5m <token>, <token> updown, quick <token> trade, quick <token> bet, <token> going up, <token> going down, is <token> going up or down, will <token> go up, will <token> go up or down, trade <token> direction, short term <token> trade, intraday <token> bet, next 5 minutes <token>, bet on <token> in next few minutes, short <token>, long <token>, <token> short term, crypto series market, 5m market, 5m trade, 5m bet, 5m candle, 5 minute candle, trade the 5m, play the 5m, updown market, up down market, crypto price direction bet, bet on price movement, crypto 5m, <token> 15m, 15m <token>, <token> 15 min, 15 minute <token> market, <token> 15 minute market, 15m <token> market, <token> 15-minute, 15min <token>, <token> 15min, trade the 15m <token>, play the 15m on <token>, give me the 15m <token>, 15m market, 15m trade, 15m bet, 15m candle, 15 minute candle, trade the 15m, play the 15m, crypto 15m, <token> 4h, 4h <token>, <token> 4 hour, 4 hour <token> market, <token> 4-hour, 4h <token> market, trade the 4h <token>, play the 4h on <token>, <token> hourly, hourly <token> trade, hourly <token> bet, 4h market, 4h trade, 4h candle, 4 hour candle, trade the 4h, crypto 4h, overnight <token> trade, 24/7 <token> bet."
-version: "0.2.7"
+version: "0.3.0"
 author: "skylavis-sky"
 tags:
   - prediction-market
@@ -48,7 +48,7 @@ if ! command -v polymarket >/dev/null 2>&1; then
     mingw*_aarch64|msys*_aarch64|cygwin*_aarch64)  TARGET="aarch64-pc-windows-msvc"; EXT=".exe" ;;
   esac
   mkdir -p ~/.local/bin
-  curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/polymarket@0.2.7/polymarket-${TARGET}${EXT}" -o ~/.local/bin/polymarket${EXT}
+  curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/polymarket@0.3.0/polymarket-${TARGET}${EXT}" -o ~/.local/bin/polymarket${EXT}
   chmod +x ~/.local/bin/polymarket${EXT}
 fi
 ```
@@ -67,21 +67,13 @@ if [ ! -f "$REPORT_FLAG" ]; then
   unset _K
   curl -s -X POST "https://plugin-store-dun.vercel.app/install" \
     -H "Content-Type: application/json" \
-    -d '{"name":"polymarket","version":"0.2.7"}' >/dev/null 2>&1 || true
+    -d '{"name":"polymarket","version":"0.3.0"}' >/dev/null 2>&1 || true
   curl -s -X POST "https://www.okx.com/priapi/v1/wallet/plugins/download/report" \
     -H "Content-Type: application/json" \
     -d '{"pluginName":"polymarket","divId":"'"$DIV_ID"'"}' >/dev/null 2>&1 || true
   touch "$REPORT_FLAG"
 fi
 ```
-
----
-
-## Pre-flight Dependencies
-
-> Run once per session before first use.
-
-### Install polymarket binary
 
 ---
 
@@ -98,20 +90,6 @@ fi
 - **Manually constructing EIP-712 messages, running raw curl signing flows, or deriving API credentials by hand** — the plugin handles all signing and credential derivation internally. If `polymarket buy` or `polymarket sell` fails, report the error directly — do NOT attempt to replicate the plugin's internals with bash/curl.
 - **Concluding that `onchainos sign-message` is unavailable** based on `onchainos --help` or `onchainos wallet --help` output alone. `sign-message` is a subcommand of `onchainos wallet` — verify with `onchainos wallet sign-message --help` before deciding it is missing. If it is genuinely missing, run `onchainos upgrade` and re-verify. Do not give up and route the user to a workaround.
 - **Suggesting the user trade via the Polymarket website, use MetaMask, or export their private key** as a fallback when the CLI can't sign. These are not acceptable workarounds — private key export in particular is a security risk. The correct path is always to fix the onchainos version.
-
----
-
-## Proactive Onboarding
-
-When a user signals they are **new or just installed** this plugin — e.g. "I just installed polymarket", "how do I get started", "what can I do with this", "help me set up", "I'm new to polymarket" — **do not wait for them to ask specific questions.** Proactively walk them through the Quickstart in order, one step at a time, waiting for confirmation before proceeding to the next:
-
-1. **Check wallet** — run `onchainos wallet addresses --chain 137`. If no address, direct them to connect via `onchainos wallet login`. Also verify `onchainos wallet sign-message --help` works — if missing, run `onchainos upgrade` and re-verify. Do not proceed to trading or suggest workarounds (MetaMask, private key export, manual curl signing) until sign-message is confirmed working.
-2. **Check access** — run `polymarket check-access`. If `accessible: false`, stop and show the warning. Do not proceed to funding.
-3. **Check balance** — run `onchainos wallet balance --chain 137`. Show USDC.e balance. If insufficient, explain bridging options (OKX Web3 bridge or CEX withdrawal to Polygon).
-4. **Find a market** — run `polymarket list-markets` and offer to help them find something interesting. Ask what topics they care about.
-5. **Place a trade** — once they pick a market, guide them through `buy` or `sell` with explicit confirmation of market, outcome, and amount before executing.
-
-Do not dump all steps at once. Guide conversationally — confirm each step before moving on.
 
 ---
 
@@ -148,129 +126,6 @@ Polymarket is a prediction market platform on Polygon where users trade outcome 
 2. Plugin signs EIP-712 Order structs via `onchainos sign-message --type eip712` and submits them off-chain to Polymarket's CLOB with L2 HMAC headers
 3. When orders are matched, Polymarket's operator settles on-chain via CTF Exchange (gasless for user)
 4. USDC.e flows from the onchainos wallet (buyer); conditional tokens flow from the onchainos wallet (seller)
-
----
-
-## Quickstart
-
-New to Polymarket? Follow these 3 steps to go from zero to placing your first trade.
-
-### Step 1 — Connect your wallet
-
-Polymarket trades are signed by an onchainos agentic wallet on Polygon. Log in with your email (OTP) or API key:
-
-```bash
-# Email-based login (sends OTP to your inbox)
-onchainos wallet login your@email.com
-
-# API key login (if you have an OKX Web3 API key)
-onchainos wallet login
-```
-
-Once connected, verify a Polygon address is active:
-
-```bash
-onchainos wallet addresses --chain 137
-```
-
-Your wallet address is your Polymarket identity — all orders are signed from it, and your positions are attached to it. No Polymarket account or web UI sign-up needed.
-
-### Step 2 — Verify your region is not restricted
-
-Polymarket is unavailable in certain jurisdictions (including the United States and OFAC-sanctioned regions). Before bridging any funds, confirm you have access:
-
-```bash
-polymarket check-access
-```
-
-- `accessible: true` — you're good to proceed
-- `accessible: false` — your IP is restricted; **do not top up USDC.e** until you have reviewed Polymarket's Terms of Use
-
-### Step 3 — Top up USDC.e on Polygon
-
-Polymarket uses **USDC.e** (bridged USDC) on Polygon as collateral. Check your balance:
-
-```bash
-onchainos wallet balance --chain 137
-```
-
-Look for `USDC.e` (contract `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`). If your balance is zero or insufficient:
-
-- **From another chain**: bridge USDC to Polygon via the OKX Web3 bridge or Polygon Bridge
-- **From a CEX**: withdraw USDC to your Polygon address via the Polygon network
-- **Minimum suggested**: $5–$10 to cover a small test trade plus gas (Polygon gas is cheap, typically < $0.01 per tx)
-
-> **There is no "Polymarket deposit"**: Polymarket does not have a deposit step. USDC.e lives in your onchainos wallet on Polygon and is spent directly when you buy shares — no transfer to a Polymarket account is required or possible.
-
-### Step 4 — Find a market and place a trade
-
-```bash
-# Browse active markets
-polymarket list-markets --keyword "trump"
-
-# Get details on a specific market
-polymarket get-market --market-id will-trump-win-2024
-
-# Buy $5 of YES shares at market price
-polymarket buy --market-id will-trump-win-2024 --outcome yes --amount 5
-
-# Check your open positions
-polymarket get-positions
-```
-
-The first `buy` or `sell` automatically derives your Polymarket API credentials from your wallet and caches them — no manual setup required.
-
----
-
-## Pre-flight Checks
-
-### Step 1 — Verify `polymarket` binary
-
-```bash
-polymarket --version
-```
-
-Expected: `polymarket 0.2.7`. If missing or wrong version, run the install script in **Pre-flight Dependencies** above.
-
-### Step 2 — Install `onchainos` CLI (required for buy/sell/cancel/redeem only)
-
-> `list-markets`, `get-market`, and `get-positions` do **not** require onchainos. Skip this step for read-only operations.
-
-```bash
-onchainos --version 2>/dev/null || echo "onchainos not installed"
-```
-
-If onchainos is not installed, direct the user to https://github.com/okx/onchainos for installation instructions.
-
-Then confirm `sign-message` is available — this is what the plugin uses internally for EIP-712 order signing:
-
-```bash
-onchainos wallet sign-message --help
-```
-
-If this command errors or is not found, upgrade onchainos first:
-
-```bash
-onchainos upgrade
-```
-
-Then re-verify. **Do not attempt to work around a missing `sign-message` by manually signing EIP-712 messages, using raw curl, suggesting the user trade via the Polymarket website, or asking the user to export their private key.** The only correct fix is to upgrade onchainos.
-
-### Step 3 — Verify wallet has a Polygon address (required for buy/sell/cancel/redeem only)
-
-```bash
-onchainos wallet addresses --chain 137
-```
-
-If no address is returned, connect a wallet first: `onchainos wallet login your@email.com` (email OTP) or `onchainos wallet login` (API key).
-
-### Step 4 — Check USDC.e balance (buy only)
-
-```bash
-onchainos wallet balance --chain 137
-```
-
-Confirm the wallet holds sufficient USDC.e (contract `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`) for the intended buy amount.
 
 ---
 
@@ -375,179 +230,44 @@ polymarket get-positions --address 0xAbCd...
 ### `buy` — Buy Outcome Shares
 
 ```
-polymarket buy --market-id <id> --outcome <outcome> --amount <usdc> [--price <0-1>] [--order-type <GTC|FOK>] [--approve] [--round-up]
+polymarket buy --market-id <id> --outcome <outcome> --amount <usdc> [--price <0-1>] [--order-type GTC|FOK] [--approve] [--dry-run] [--round-up] [--post-only] [--expires <unix_ts>] [--token-id <id>]
 ```
 
-> **Amount vs shares**: `buy` takes `--amount` in **USDC.e** (dollars you spend). `sell` takes `--shares` in **outcome tokens** (shares you hold). They are different units — a user saying "I want to sell $50" means sell enough shares to receive ~$50 USDC; you must first check their share balance via `get-positions` and convert using the current bid price.
+> **Amount vs shares**: `buy` takes `--amount` in **USDC.e** (dollars spent). `sell` takes `--shares` (outcome tokens held). A user saying "sell $50" means sell enough shares to receive ~$50 — check balance via `get-positions` first.
 
-**Flags:**
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--market-id` | Market condition_id or slug | required |
-| `--outcome` | outcome label, case-insensitive (e.g. `yes`, `no`, `trump`, `republican`) | required |
-| `--amount` | USDC.e to spend, e.g. `100` = $100.00 | required |
-| `--price` | Limit price in (0, 1), representing **probability** (e.g. `0.65` = "65% chance this outcome occurs = $0.65 per share"). Omit for market order (FOK). | — |
-| `--order-type` | `GTC` (resting limit) or `FOK` (fill-or-kill) | `GTC` |
-| `--approve` | Force USDC.e approval before placing | false |
-| `--dry-run` | Simulate without submitting the order or triggering any on-chain approval. Prints a confirmation JSON with resolved parameters and exits. | false |
-| `--round-up` | If amount is too small for divisibility constraints, snap up to the minimum valid amount rather than erroring. Logs the rounded amount to stderr and includes `rounded_up: true` in output. | false |
-| `--post-only` | Maker-only: reject if the order would immediately cross the spread (become a taker). Requires `--order-type GTC`. Qualifies for Polymarket maker rebates (up to 50% of fees returned daily). Incompatible with `--order-type FOK`. | false |
-| `--expires` | Unix timestamp (seconds, UTC) at which the order auto-cancels. Minimum 90 seconds in the future (CLOB enforces a "now + 1 min 30 s" security threshold). Automatically sets `order_type` to `GTD` (Good Till Date) — do not also pass `--order-type GTC`. Example: `--expires $(date -d '+1 hour' +%s)` | — |
-| `--confirm` | Confirm a previously gated action (reserved for future use) | false |
-| `--token-id` | Skip market lookup — provide the outcome token ID directly (from `get-series` or `get-market` output). Saves 3-4 HTTP round trips. Use after `get-series` to cache the token ID for repeated trades on the same slot. | — |
+> ⚠️ **Approval**: Before each buy, submits `approve(exchange, order_amount)` for **exactly the order amount** if allowance is insufficient. Agent confirmation before calling `buy` is the sole safety gate.
 
-**Auth required:** Yes — onchainos wallet; EIP-712 order signing via `onchainos sign-message --type eip712`
+> ⚠️ **Size errors**: Never auto-escalate order amount. Surface the error + minimum to the user and ask for explicit confirmation before retrying with `--round-up`.
 
-**On-chain ops:** If USDC.e allowance is insufficient, runs `onchainos wallet contract-call --chain 137 --to <USDC.e> --input-data <approve_calldata> --force` automatically.
-
-> ⚠️ **Approval notice**: Before each buy, the plugin checks the current USDC.e allowance and, if insufficient, submits an `approve(exchange, amount)` transaction for **exactly the order amount** — no more. This fires automatically with no additional onchainos confirmation gate. **Agent confirmation before calling `buy` is the sole safety gate for this approval.**
-
-**Amount encoding:** USDC.e amounts are 6-decimal. Order amounts are computed using GCD-based integer arithmetic to guarantee `maker_raw / taker_raw == price` exactly — Polymarket requires maker (USDC) accurate to 2 decimal places and taker (shares) to 4 decimal places, and floating-point rounding of either independently breaks the price ratio and causes API rejection.
-
-> ⚠️ **Minimum order size enforcement**: There are up to three independent minimums that can reject a small order. The plugin pre-validates the first two and surfaces clear errors with the required minimums — **never auto-escalate a user's order amount without explicit confirmation**.
->
-> | Minimum | Source | Applies to |
-> |---------|--------|------------|
-> | Divisibility minimum (price-dependent) | Plugin zero-amount guard | All order types |
-> | Share minimum (typically 5 shares) | Plugin resting-order guard (`min_order_size`) | GTC/GTD/POST_ONLY limit orders priced **below** the current best ask |
-> | CLOB execution floor (~$1) | Exchange runtime for immediately marketable orders | Market (FOK) orders and limit orders priced **at or above** the best ask |
->
-> **Agent flow when a size guard fires:**
-> 1. For **divisibility** errors (`"rounds to 0 shares"`): compute minimum from the error message and present it to the user.
-> 2. For **share minimum** errors (`"below this market's minimum of N shares"`): the required share count and ≈USDC cost are in the error. Ask once: *"Minimum is N shares (≈$X). Place that amount instead?"* and retry with `--round-up` on confirmation.
-> 3. If `--price` was **omitted** (market/FOK order), the CLOB's ~$1 floor applies instead of the share minimum. Present both the divisibility minimum and the $1 floor in a **single message** with two options: **(a) $1.00 market order** (immediate fill) or **(b) resting limit below the ask** (avoids the $1 floor; only fills if the price comes down).
-> 4. Never autonomously choose a higher amount without explicit user confirmation.
-
-> ⚠️ **Market order slippage**: When `--price` is omitted, the order is a FOK (fill-or-kill) market order that fills at the best available price from the order book. On low-liquidity markets or large order sizes, this price may be significantly worse than the mid-price. Recommend using `--price` (limit order) for amounts above $10 to control slippage.
-
-> ⚠️ **Short-lived markets**: Check `end_date` in `get-market` output before placing resting (GTC) orders. A market resolving in less than 24 hours may resolve before a limit order fills — use FOK for immediate execution or confirm the user is aware.
-
-**Output fields:** `order_id`, `status` (live/matched/unmatched), `condition_id`, `outcome`, `token_id`, `side`, `order_type`, `limit_price`, `usdc_amount`, `shares`, `tx_hashes`
-
-**Example:**
-```
-polymarket buy --market-id will-btc-hit-100k-by-2025 --outcome yes --amount 50 --price 0.65
-polymarket buy --market-id presidential-election-winner-2024 --outcome trump --amount 50 --price 0.52
-polymarket buy --market-id 0xabc... --outcome no --amount 100
-```
+**Full flags, encoding rules, and minimum order guidance**: load `SKILL-orders.md`
 
 ---
 
 ### `sell` — Sell Outcome Shares
 
 ```
-polymarket sell --market-id <id> --outcome <outcome> --shares <amount> [--price <0-1>] [--order-type <GTC|FOK>] [--approve] [--dry-run]
+polymarket sell --market-id <id> --outcome <outcome> --shares <n> [--price <0-1>] [--order-type GTC|FOK] [--approve] [--dry-run] [--post-only] [--expires <unix_ts>] [--token-id <id>]
 ```
 
-**Flags:**
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--market-id` | Market condition_id or slug | required |
-| `--outcome` | outcome label, case-insensitive (e.g. `yes`, `no`, `trump`, `republican`) | required |
-| `--shares` | Number of shares to sell, e.g. `250.5` | required |
-| `--price` | Limit price in (0, 1). Omit for market order (FOK) | — |
-| `--order-type` | `GTC` (resting limit) or `FOK` (fill-or-kill) | `GTC` |
-| `--approve` | Force CTF token approval before placing | false |
-| `--post-only` | Maker-only: reject if the order would immediately cross the spread. Requires `--order-type GTC`. Qualifies for maker rebates. Incompatible with `--order-type FOK`. | false |
-| `--expires` | Unix timestamp (seconds, UTC) at which the order auto-cancels. Minimum 90 seconds in the future. Auto-sets `order_type` to `GTD`. | — |
-| `--dry-run` | Simulate without submitting the order or triggering any on-chain approval. Prints a confirmation JSON and exits. Use to verify parameters before a real sell. | false |
-| `--confirm` | Confirm a low-price market sell that was previously gated | false |
-| `--token-id` | Skip market lookup — provide the outcome token ID directly. Same fast path as `buy --token-id`. | — |
+> ⚠️ **Pre-sell required**: Before calling `sell`, run `get-market` to check `best_bid`, spread, and liquidity. Warn the user and require confirmation if any signal is poor. Full liquidity check rules: load `SKILL-orders.md`.
 
-**Auth required:** Yes — onchainos wallet; EIP-712 order signing via `onchainos sign-message --type eip712`
+> ⚠️ **setApprovalForAll**: The first `sell` grants the exchange blanket ERC-1155 approval over all outcome tokens in the wallet. Confirm the user understands this before their first sell.
 
-**On-chain ops:** If CTF token allowance is insufficient, runs `onchainos wallet contract-call --chain 137 --to <CTF> --input-data <setApprovalForAll_calldata> --force` automatically.
-
-> ⚠️ **setApprovalForAll notice**: The CTF token approval calls `setApprovalForAll(exchange, true)` — this grants the exchange contract blanket approval over **all** ERC-1155 outcome tokens in the wallet, not just the tokens being sold. This is the standard ERC-1155 approval model (per-token amounts are not supported by the standard) and is the same mechanism used by Polymarket's own web interface. Always confirm the user understands this before their first sell.
-
-**Output fields:** `order_id`, `status`, `condition_id`, `outcome`, `token_id`, `side`, `order_type`, `limit_price`, `shares`, `usdc_out`, `tx_hashes`
-
-> ⚠️ **Market order slippage**: When `--price` is omitted, the order is a FOK market order that fills at the best available bid. On thin markets, the received price may be well below mid. Use `--price` for any sell above a few shares to avoid slippage.
-
-**Example:**
-```
-polymarket sell --market-id will-btc-hit-100k-by-2025 --outcome yes --shares 100 --price 0.72
-polymarket sell --market-id 0xabc... --outcome no --shares 50
-```
-
----
-
-### Pre-sell Liquidity Check (Required Agent Step)
-
-**Before calling `sell`, you MUST call `get-market` and assess liquidity for the outcome being sold.**
-
-```bash
-polymarket get-market --market-id <id>
-```
-
-Find the token matching the outcome being sold in the `tokens[]` array. Extract:
-- `best_bid` — current highest buy offer for that outcome
-- `best_ask` — current lowest sell offer  
-- `last_trade` — price of the most recent trade
-- Market-level `liquidity` — total USD locked in the market
-
-**Warn the user and ask for explicit confirmation before proceeding if ANY of the following apply:**
-
-| Signal | Threshold | What to tell the user |
-|--------|-----------|----------------------|
-| No buyers | `best_bid` is null or `0` | "There are no active buyers for this outcome. Your sell order may not fill." |
-| Price collapsed | `best_bid < 0.5 × last_trade` | "The best bid ($B) is less than 50% of the last traded price ($L). You would be selling at a significant loss from recent prices." |
-| Wide spread | `best_ask − best_bid > 0.15` | "The bid-ask spread is wide ($spread), indicating thin liquidity. You may get a poor fill price." |
-| Thin market | `liquidity < 1000` | "This market has very low total liquidity ($X USD). Large sells will have high price impact." |
-
-**When warning, always show the user:**
-1. Current `best_bid`, `last_trade`, and market `liquidity`
-2. Estimated USDC received: `shares × best_bid` (before fees)
-3. A clear question: *"Market liquidity looks poor. Estimated receive: $Y for [N] shares at [best_bid]. Do you want to proceed?"*
-
-Only call `sell` after the user explicitly confirms they want to proceed.
-
-**If `--price` is provided by the user**, skip this check — the user has already set their acceptable price.
-
----
-
-### Safety Guards
-
-Runtime guards built into the binary:
-
-| Guard | Command | Trigger | Behaviour |
-|-------|---------|---------|-----------|
-| Zero-amount divisibility | `buy` | USDC amount rounds to 0 shares after GCD alignment (too small for the given price) | Exits early with error and computed minimum viable amount. No approval tx fired. |
-| Zero-amount divisibility | `sell` | Share amount rounds to 0 USDC after GCD alignment | Exits early with error and computed minimum viable amount. No approval tx fired. |
-
-**Agent behaviour on size errors**: When either guard fires, or when the CLOB rejects with a minimum-size error, **do not autonomously retry with a higher amount**. Surface the error and minimum to the user and ask for explicit confirmation before retrying. If the user agrees to the rounded-up amount, retry with `--round-up` — the binary will handle the rounding and log it to stderr. The `min_order_size` field in the API response is unreliable and must never be used as a basis for auto-escalating order size.
-
-Liquidity protection for `sell` is handled at the agent level via the **Pre-sell Liquidity Check** above.
+**Full flags and output**: load `SKILL-orders.md`
 
 ---
 
 ### `cancel` — Cancel Open Orders
 
 ```
-polymarket cancel --order-id <id>
-polymarket cancel --market <condition_id>
-polymarket cancel --all
+polymarket cancel --order-id <0x...>    # single order
+polymarket cancel --market <cid>        # all orders for a market
+polymarket cancel --all                 # all open orders (use with caution)
 ```
 
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `--order-id` | Cancel a single order by its 0x-prefixed hash |
-| `--market` | Cancel all orders for a specific market (condition_id) |
-| `--all` | Cancel ALL open orders (use with extreme caution) |
+**Open orders only** — filled, partially filled, or expired orders cannot be cancelled.
 
-**Auth required:** Yes — onchainos wallet; credentials auto-derived on first run
-
-> **Open orders only**: `cancel` operates on **open (resting) orders** — orders that have not yet filled, partially filled, or expired. Already-filled orders cannot be cancelled. To check which orders are currently open, use `get-positions` or the Polymarket UI.
-
-**Output fields:** `canceled` (list of cancelled order IDs), `not_canceled` (map of failed IDs to reasons)
-
-**Example:**
-```
-polymarket cancel --order-id 0xdeadbeef...
-polymarket cancel --market 0xabc123...
-polymarket cancel --all
-```
+**Full details**: load `SKILL-orders.md`
 
 ---
 
@@ -576,213 +296,31 @@ polymarket redeem --market-id <condition_id_or_slug> --dry-run
 
 ### `get-series` — Series Markets (Recurring Short-Duration)
 
-Polymarket runs recurring **Up or Down** markets on BTC, ETH, SOL, and XRP at three intervals:
-
-| Series ID | Interval | Schedule | Slug pattern |
-|-----------|----------|----------|--------------|
-| `btc-5m`, `eth-5m`, `sol-5m`, `xrp-5m` | 5 minutes | NYSE hours (9:30 AM–4:00 PM ET, Mon–Fri) | `{asset}-updown-5m-{unix_ts}` |
-| `btc-15m`, `eth-15m`, `sol-15m`, `xrp-15m` | 15 minutes | NYSE hours | `{asset}-updown-15m-{unix_ts}` |
-| `btc-4h`, `eth-4h`, `sol-4h`, `xrp-4h` | 4 hours | 24/7 | `{asset}-updown-4h-{unix_ts}` |
-
-Bare asset aliases (`btc`, `bitcoin`, `eth`, `ethereum`, `sol`, `solana`, `xrp`) resolve to the 5-minute series.
-
 ```
-polymarket get-series --series btc-5m      # Current + next BTC 5-min slot
-polymarket get-series --series eth-15m     # Ethereum 15-min
-polymarket get-series --series btc-4h      # BTC 4-hour (available 24/7)
-polymarket get-series --list               # Show all 12 supported series
+polymarket get-series --series <id>    # btc-5m, eth-15m, btc-4h, etc.
+polymarket get-series --list           # all 12 supported series
 ```
 
-**Output fields:** `series`, `asset`, `session` (in/out of trading hours), `current_slot` (slug, condition_id, outcomes with token_ids/prices, seconds_remaining, liquidity), `next_slot`, `tip` (ready-to-use buy command)
+Series IDs: `btc-5m`, `eth-5m`, `sol-5m`, `xrp-5m` (NYSE hours), `btc-15m`, `eth-15m`, `sol-15m`, `xrp-15m` (NYSE hours), `btc-4h`, `eth-4h`, `sol-4h`, `xrp-4h` (24/7).
 
-**Trading on a series (two ways):**
+Trade directly: `polymarket buy --market-id btc-5m --outcome up --amount 50` — auto-resolves to the current accepting slot.
 
-*Option A — use the series ID directly (recommended):*
-```
-polymarket buy --market-id btc-5m --outcome up --amount 50
-polymarket buy --market-id btc-5m --outcome down --amount 50
-```
-The binary auto-resolves `btc-5m` to the current accepting slot at execution time.
-If the market is closed or outside trading hours, the command fails with a clear message.
-
-*Option B — resolve first, then trade:*
-```
-polymarket get-series --series btc-5m      # note the slug in current_slot.tip
-polymarket buy --market-id btc-updown-5m-<ts> --outcome up --amount 50
-```
-
-**When to use which:**
-- Option A is faster for single trades — one command, auto-resolves the slot
-- Option B is better when you want to inspect price/liquidity before committing
-- For repeated trades on consecutive slots, use Option A each time — it always resolves the current open slot
-
-*Option C — fastest path (power users):*
-```
-# 1. Get token IDs once (note the token_id for "Up" from the output)
-polymarket get-series --series btc-5m
-
-# 2. Use --token-id to skip all market resolution on subsequent trades
-polymarket buy --token-id <up_token_id_from_above> --outcome up --amount 50 --price 0.52
-```
-`--token-id` skips the Gamma and CLOB market lookup entirely — only the order book and fee are fetched. Note: token IDs change each slot (every 5 min), so re-run `get-series` at each new slot.
-
-**Outcomes:** `up` (price went higher) and `down` (price went lower) in the 5-minute window.
-Both are valid `--outcome` values for `buy` and `sell`.
-
-**Outside trading hours:** `buy --market-id btc-5m` fails with a message showing when the next session opens. Check with `get-series --series btc-5m` to see session status before placing orders.
-
-**Agent flow:**
-1. Run `get-series --series <id>` to show the user the current slot (price, liquidity, seconds remaining) and confirm they want to trade it.
-2. Once confirmed, run `buy --token-id <token_id_from_step_1> --outcome <up|down> --amount <usdc> --price <price_from_step_1> --dry-run` to preview the order. Use the token ID from `current_slot.outcomes.Up.token_id` (or `Down`). This is faster than using `--market-id` because the market lookup is already done.
-3. After user confirms the dry-run output, run without `--dry-run` to submit.
-4. Return the `order_id` and `status` from the response.
-
-**Example:**
-```bash
-# Step 1: Show current slot — note token_id and price in the output
-polymarket get-series --series btc-5m
-# Output includes: current_slot.outcomes.Up.token_id = "0xabc...", price = 0.52
-
-# Step 2: Preview using cached token ID (faster — skips market lookup)
-polymarket buy --token-id 0xabc... --outcome up --amount 50 --price 0.52 --dry-run
-
-# Step 3: After user confirms:
-polymarket buy --token-id 0xabc... --outcome up --amount 50 --price 0.52
-```
-
-### Token ID caching for fast execution
-
-**Automatically activate `--token-id`** whenever a `get-series` call has already been made in the current conversation:
-
-1. After any `get-series` call, record from the output:
-   - `current_slot.outcomes.Up.token_id` and `current_slot.outcomes.Down.token_id`
-   - `current_slot.end_unix` (the Unix timestamp when this slot expires)
-
-2. Before using cached token IDs, verify the slot is still live:
-   - If current time < `end_unix - 30` seconds → slot is valid, use `--token-id`
-   - If current time ≥ `end_unix - 30` seconds → slot is expiring; re-run `get-series` to refresh
-
-3. When the slot is valid, always prefer `--token-id` over `--market-id btc-5m` — it saves 3-4 HTTP round trips from the binary (~500ms).
-
-4. Always pass `--price` when using `--token-id`. The price from `get-series` output is the current market price — use it or ask the user for their target price. Without `--price`, the binary must still fetch the order book for worst-case pricing (the main savings come when `--price` is also provided).
-
-**Decision rule:**
-
-```
-User wants to trade a series (BTC/ETH/SOL/XRP up/down):
-├── get-series output available in this conversation AND slot still live (end_unix > now + 30s)?
-│   └── YES → use: buy --token-id <cached_id> --outcome <up|down> --amount <x> --price <cached_price>
-└── NO (no prior get-series, or slot expired)
-    └── Run get-series first → then use --token-id from fresh output
-```
-
-### Series intent detection
-
-Route to series trading when the user's message combines a **supported crypto asset** with a **short time horizon or directional framing**. Detect the interval first, then the asset.
-
-#### Step 1 — Detect interval
-
-| Interval | Trigger patterns |
-|----------|-----------------|
-| **5m** | `5m`, `5min`, `5-min`, `5 min`, `5 minute(s)`, `next 5 minutes`, `next few minutes`, `quick`, `intraday`, `short term`, `right now` (implied immediate) |
-| **15m** | `15m`, `15min`, `15-min`, `15 min`, `15 minute(s)`, `quarter hour` |
-| **4h** | `4h`, `4hr`, `4 hour`, `4-hour`, `hourly` (when no 1h is mentioned), `overnight`, `evening trade` |
-| **Ambiguous** | No time qualifier → ask user: *"Which interval — 5m, 15m, or 4h?"* then route accordingly |
-
-#### Step 2 — Detect asset
-
-`<token>` fills with: `bitcoin`/`btc`, `ethereum`/`eth`, `solana`/`sol`, `xrp`/`ripple`
-
-#### Step 3 — Route
-
-```
-asset detected + interval detected → get-series --series <token>-<interval>
-asset detected + no interval → ask interval, default offer: 5m
-no asset + interval → ask which asset (BTC, ETH, SOL, XRP)
-neither → Regular market (list-markets or get-market)
-```
-
-**Phrases that map to each series** (`<token>` = btc / eth / sol / xrp or full names):
-
-*5m series:*
-- "`<token>` 5m" / "5m `<token>`" / "`<token>` 5min"
-- "trade the 5m on `<token>`" / "play the 5m `<token>`"
-- "bet on `<token>` going up in the next 5 minutes"
-- "quick `<token>` trade" / "quick `<token>` bet"
-- "will `<token>` go up or down right now?"
-- "`<token>` updown" / "`<token>` up or down"
-- "play the 5-minute candle on `<token>`"
-
-*15m series:*
-- "`<token>` 15m" / "15m `<token>`" / "`<token>` 15min"
-- "trade the 15m on `<token>`" / "play the 15m `<token>`"
-- "15 minute `<token>` market" / "bet on `<token>` in the next 15 minutes"
-- "give me the `<token>` 15m"
-
-*4h series (24/7):*
-- "`<token>` 4h" / "4h `<token>`" / "`<token>` 4 hour"
-- "trade the 4h on `<token>`" / "play the 4h `<token>`"
-- "hourly `<token>` trade" / "overnight `<token>` bet"
-- "4h candle on `<token>`"
-
-**Disambiguation from regular markets:**
-
-| User phrase | Route |
-|-------------|-------|
-| "`<token>` 5m" / "5m `<token>`" / "`<token>` 5min" | Series — `buy --market-id <token>-5m` |
-| "`<token>` 15m" / "15m `<token>`" / "`<token>` 15min" | Series — `buy --market-id <token>-15m` |
-| "`<token>` 4h" / "4h `<token>`" / "`<token>` hourly" | Series — `buy --market-id <token>-4h` |
-| "trade the 5m/15m/4h on `<token>`" / "`<token>` updown" | Series — route to matching series |
-| "Bet on ETH price direction right now" | Series — default 5m → `buy --market-id eth-5m` |
-| "Will BTC hit 100k?" | Regular market — `list-markets --keyword bitcoin` |
-| "BTC prediction market" (no time frame, no direction) | Regular market — `list-markets` first |
-| "TSLA up or down today?" / "Will NVDA go up?" | Daily stock market (not series) — `list-markets --keyword tsla` |
-| Any named event (election, sports, earnings) | Regular market |
-| "quick crypto bet" (no specific asset) | Ask which asset: BTC, ETH, SOL, or XRP |
-
-**Key rules:**
-- `<asset> + <Nm>` or `<Nm> + <asset>` in any order always means series when N is 5, 15, or 4h
-- Stocks/equities (TSLA, NVDA, SPX, gold, oil) use date-based daily markets, **not** series — route via `list-markets`
-- 4h series runs **24/7** — no NYSE hours check needed; safe to route at any time of day
-
-**When in doubt:** call `get-series --series <token>-5m` (or the relevant interval). The output clearly shows whether trading is currently possible (in/out of hours, seconds remaining, current prices), which is low-cost and resolves ambiguity before committing funds.
+**Full series guide, intent detection, token ID caching, and profile-accelerated routing**: load `SKILL-series.md`
 
 ---
 
-## Credential Setup (Required for buy/sell/cancel/redeem)
+## Authentication
 
-`list-markets`, `get-market`, and `get-positions` require no authentication. `redeem` requires only an onchainos wallet (no CLOB credentials).
+**Your onchainos wallet is your Polymarket identity — no Polymarket account, registration, or separate API keys required.**
 
-**No manual credential setup required.** On the first trading command, the plugin:
-1. Resolves the onchainos wallet address via `onchainos wallet addresses --chain 137`
-2. Derives Polymarket API credentials for that address via the CLOB API (L1 ClobAuth signed by onchainos)
-3. Caches them at `~/.config/polymarket/creds.json` (0600 permissions) for all future calls
+On the first `buy`, `sell`, or `cancel`:
+1. The plugin reads your Polygon wallet address from `onchainos wallet addresses --chain 137`
+2. Derives Polymarket CLOB credentials by signing a one-time challenge with your onchainos key
+3. Caches them at `~/.config/polymarket/creds.json` (0600 permissions)
 
-The onchainos wallet address is the Polymarket trading identity. Credentials are automatically re-derived if the active wallet changes.
+If credentials become stale (`buy`/`sell` returns "NOT AUTHORIZED"), the plugin automatically clears the cache and prompts you to re-run — no manual action needed.
 
-**Credential rotation**: If `buy` or `sell` returns `"credentials are stale or invalid"`, the plugin automatically clears the cached credentials and prompts you to re-run — no manual action needed. To manually force re-derivation:
-
-```bash
-rm ~/.config/polymarket/creds.json
-```
-
-**Override via environment variables** (optional — takes precedence over cached credentials):
-
-```bash
-export POLYMARKET_API_KEY=<uuid>
-export POLYMARKET_SECRET=<base64url-secret>
-export POLYMARKET_PASSPHRASE=<passphrase>
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `POLYMARKET_API_KEY` | Optional override | Polymarket CLOB API key UUID |
-| `POLYMARKET_SECRET` | Optional override | Base64url-encoded HMAC secret for L2 auth |
-| `POLYMARKET_PASSPHRASE` | Optional override | CLOB API passphrase |
-
-**Credential storage:** Credentials are cached at `~/.config/polymarket/creds.json` with `0600` permissions (owner read/write only). A warning is printed at startup if the file has looser permissions — run `chmod 600 ~/.config/polymarket/creds.json` to fix. The file remains in plaintext; avoid storing it on shared machines.
+> Advanced: credentials can be overridden via `POLYMARKET_API_KEY` / `POLYMARKET_SECRET` / `POLYMARKET_PASSPHRASE` env vars. Only relevant for users who already have independent Polymarket CLOB API credentials. Full details: load `SKILL-onboarding.md`.
 
 ---
 
@@ -798,65 +336,6 @@ export POLYMARKET_PASSPHRASE=<passphrase>
 | Polymarket Proxy Factory | `0xaB45c5A4B0c941a2F231C04C3f49182e1A254052` | Proxy wallet factory |
 | Gnosis Safe Factory | `0xaacfeea03eb1561c4e67d661e40682bd20e3541b` | Gnosis Safe factory |
 | UMA Adapter | `0x6A9D222616C90FcA5754cd1333cFD9b7fb6a4F74` | Oracle resolution adapter |
-
----
-
-## Order Type Selection Guide
-
-There are four effective order types. The agent should match user intent to the right one — and proactively suggest upgrades where applicable.
-
-| Order type | Flags | When to use |
-|------------|-------|-------------|
-| **FOK** (Fill-or-Kill) | *(omit `--price`)* | User wants to trade immediately at the best available price. Fills in full or not at all. |
-| **GTC** (Good Till Cancelled) | `--price <x>` | User sets a limit price and is happy to wait indefinitely for a fill. Default for limit orders. |
-| **POST_ONLY** (Maker-only GTC) | `--price <x> --post-only` | User wants guaranteed maker status on a resting limit. Qualifies for Polymarket maker rebates (up to 50% of fees returned daily). |
-| **GTD** (Good Till Date) | `--price <x> --expires <unix_ts>` | User wants a resting limit that auto-cancels at a specific time. |
-
-### When to proactively suggest POST_ONLY
-
-When a user places a resting limit order (i.e. `--price` is provided and the price is **below the best ask** for a buy, or **above the best bid** for a sell), mention maker rebates and offer `--post-only`:
-
-> *"Since this is a resting limit below the current ask, it will sit in the order book as a maker order. Polymarket returns up to 50% of fees to makers daily — would you like me to add `--post-only` to guarantee maker status and qualify for rebates?"*
-
-Do **not** suggest `--post-only` for FOK orders (incompatible) or for limit prices at or above the best ask (those are marketable and would be rejected by the flag).
-
-### When to proactively suggest GTD
-
-When the user expresses a time constraint on their order — phrases like:
-
-- *"cancel if it doesn't fill by end of day"*
-- *"good for the next hour"*
-- *"don't leave this open overnight"*
-- *"only valid until [time]"*
-- *"auto-cancel at [time]"*
-
-Compute the target Unix timestamp and suggest `--expires`:
-
-> *"I can set this to auto-cancel at [time] using `--expires $(date -d '[target]' +%s)`. Want me to add that?"*
-
-Minimum expiry is **90 seconds** from now. For human-friendly inputs ("1 hour", "end of day"), convert to a Unix timestamp before passing to the flag.
-
-### When to combine POST_ONLY + GTD
-
-If the user wants both maker status and a time limit, combine both flags:
-
-```
-polymarket buy --market-id <id> --outcome yes --amount <usdc> --price <x> --post-only --expires <unix_ts>
-```
-
-### Decision tree (quick reference)
-
-```
-User wants to trade:
-├── Immediately (no price preference)         → FOK        (omit --price)
-└── At a specific price (resting limit)
-    ├── No time limit
-    │   ├── Fee savings matter?               → POST_ONLY  (--price x --post-only)
-    │   └── No preference                    → GTC        (--price x)
-    └── With a time limit
-        ├── Fee savings matter?               → GTD + POST_ONLY  (--price x --post-only --expires ts)
-        └── No preference                    → GTD        (--price x --expires ts)
-```
 
 ---
 
@@ -907,6 +386,178 @@ Binary (YES/NO) or categorical (multi-outcome) markets on elections, sports, tec
 
 ---
 
+## User Profile & Personalization
+
+Profile path: `~/.config/polymarket/profile.json` | Managed entirely by Claude | Binary never reads or writes this file
+
+### How to read it
+
+```bash
+cat ~/.config/polymarket/profile.json 2>/dev/null || echo "{}"
+```
+
+If the file does not exist, create it on first write using the default schema (see below).
+
+### Session start behavior
+
+1. Read the profile (or use `{}` if absent).
+2. Increment `history.session_count` by 1 and write back.
+3. If `session_count` ≤ 1 → load `SKILL-onboarding.md` (new user path).
+4. Apply `preferences.*` silently (see table below). If `session_count` is 1 or 2, mention once after the first interaction: *"I can remember your preferences over time — just say 'save my defaults' after any trade."*
+
+### Profile schema
+
+```json
+{
+  "_version": 1,
+  "_updated": "<ISO-8601 UTC>",
+  "_note": "Managed by Claude. Do not store API keys or wallet secrets here.",
+  "preferences": {
+    "asset": null,
+    "interval": null,
+    "amount_usdc": null,
+    "order_style": {
+      "always_limit": false,
+      "always_post_only": false,
+      "always_dry_run_first": false
+    },
+    "interest_areas": []
+  },
+  "aliases": {
+    "trigger_phrases": {},
+    "trade_specs": {}
+  },
+  "history": {
+    "session_count": 0,
+    "markets": {}
+  }
+}
+```
+
+### Preference application
+
+| Field | Null / empty | Non-null |
+|-------|-------------|----------|
+| `preferences.asset` | Ask user | Default asset for series — skip "which asset?" |
+| `preferences.interval` | Ask user | Default interval for series — skip "which interval?" |
+| `preferences.amount_usdc` | Ask user | **Suggest** this amount — always confirm before using |
+| `order_style.always_limit` | Default FOK | Use GTC + prompt for `--price` |
+| `order_style.always_post_only` | No default | Append `--post-only` to every limit order |
+| `order_style.always_dry_run_first` | No auto dry-run | Run `--dry-run` before every live trade |
+| `preferences.interest_areas` | No routing hint | Array of topics: `["sports", "crypto-series", "politics", "stocks", "commodities"]` — shapes market suggestions |
+
+### Interest area routing (behavior-inferred, never surveyed)
+
+**Do not ask abstract category questions** like "are you more interested in sports or politics?"
+
+When intent is vague ("find me something to bet on", "what should I trade?", "suggest a market"):
+1. Run `polymarket list-markets --limit 5`
+2. Present results ordered by soonest `end_date`, with time remaining shown prominently
+3. Let the user pick — their choice implicitly signals interest
+4. After the user picks, infer the category from the market slug/question and append to `preferences.interest_areas`
+
+For returning users with `interest_areas` populated: run `list-markets` filtered by the most frequent interest area, sorted by soonest close. Lead with those results.
+
+| Interest area | `list-markets` keyword filter |
+|--------------|-------------------------------|
+| `"crypto-series"` | use `get-series` (auto-resolves current slot) |
+| `"sports"` | `--keyword nba` / `--keyword soccer` / `--keyword nfl` |
+| `"politics"` | `--keyword election` / `--keyword senate` |
+| `"stocks"` | `--keyword tsla` / `--keyword nvda` |
+| `"commodities"` | `--keyword gold` / `--keyword oil` |
+
+### Alias resolution
+
+Before the routing table, check:
+1. `aliases.trigger_phrases` (case-insensitive substring match against user input) → if matched, route to the stored series ID directly
+2. `aliases.trade_specs` (user uses a recognized alias key) → if matched, expand to the full trade spec
+
+**Always confirm before executing a trade spec alias**: *"Using alias '[name]': [expanded spec]. Proceed?"*
+
+### After each successful trade
+
+Update `history.markets[condition_id]`:
+- Increment `trade_count`, set `last_trade_at` (ISO-8601 UTC), `last_outcome`, `last_amount_usdc`
+- Set `label` from the market question (sanitized — see rules below)
+- Set `category` from the market type
+
+After 3 trades on the same market/series in a session, offer:
+*"You've traded [X] three times today. Want me to save a shortcut phrase for it? Just say the phrase you'd like to use."*
+
+### Sanitization before writing
+
+All strings written to `profile.json` must pass these checks:
+
+| Source | Fields | Rules |
+|--------|--------|-------|
+| API-sourced (market question) | `history.markets.*.label` | Truncate to 60 chars; strip control chars (0x00–0x1F, 0x7F); strip `#`, backticks, HTML tags |
+| User-provided (aliases, triggers) | `aliases.*`, `preferences.interest_areas` | Truncate to 80 chars; strip control chars; no newlines; no raw `{`, `}`, `"` |
+| User-provided (market IDs) | `aliases.trade_specs.*.market_id` | Must match `^[a-zA-Z0-9\-]+$` or `^0x[0-9a-fA-F]+$` — reject otherwise |
+
+Before writing, re-serialize the entire profile as JSON and verify it round-trips (parse the output string to confirm valid JSON before writing to disk).
+
+### Profile management commands
+
+| User says | Action |
+|-----------|--------|
+| "show my profile" / "what do you know about me?" | Read and display profile fields |
+| "save my defaults" / "remember this amount" | Write current trade params to `preferences` |
+| "set default asset to BTC" | Set `preferences.asset = "btc"` |
+| "set default interval to 4h" | Set `preferences.interval = "4h"` |
+| "always dry-run first" | Set `order_style.always_dry_run_first = true` |
+| "save alias [phrase] for this market" | Write to `aliases.trigger_phrases` or `aliases.trade_specs` |
+| "forget alias [phrase]" | Remove from `aliases` |
+| "reset my profile" | Confirm first, then delete `~/.config/polymarket/profile.json` |
+
+---
+
+## Dynamic Context Loading
+
+Fetch sub-files on demand when the trigger applies. If the fetch fails (network unavailable), use the Quick Reference stubs below.
+
+| Trigger | Fetch |
+|---------|-------|
+| Series intent detected (5m / 15m / 4h) | `curl -fsSL https://raw.githubusercontent.com/okx/plugin-store/main/skills/polymarket/SKILL-series.md` |
+| `buy` / `sell` / `cancel` | `curl -fsSL https://raw.githubusercontent.com/okx/plugin-store/main/skills/polymarket/SKILL-orders.md` |
+| New user (`session_count` ≤ 1) or setup help | `curl -fsSL https://raw.githubusercontent.com/okx/plugin-store/main/skills/polymarket/SKILL-onboarding.md` |
+
+### Quick Reference: Orders (fallback)
+
+```
+polymarket buy  --market-id <id> --outcome <outcome> --amount <usdc> [--price <0-1>] [--order-type GTC|FOK] [--dry-run] [--round-up] [--post-only] [--expires <unix_ts>] [--token-id <id>]
+polymarket sell --market-id <id> --outcome <outcome> --shares <n>    [--price <0-1>] [--order-type GTC|FOK] [--dry-run] [--post-only] [--expires <unix_ts>] [--token-id <id>]
+polymarket cancel --order-id <0x...> | --market <cid> | --all
+```
+
+- `buy` takes `--amount` (USDC.e spent); `sell` takes `--shares` (outcome tokens to sell)
+- Before `sell`: run `get-market` to check `best_bid`, spread, and liquidity — warn and confirm if any signal is poor
+- Size errors: never auto-escalate. Surface error + minimum to user; ask for confirmation before `--round-up`
+- Order types: FOK (omit `--price`), GTC (`--price`), POST_ONLY (`--price --post-only`), GTD (`--price --expires <ts>`)
+- Suggest `--post-only` when order will rest as maker; suggest `--expires` when user mentions a time limit
+- Neg risk markets: plugin approves both `NEG_RISK_CTF_EXCHANGE` and `NEG_RISK_ADAPTER` automatically
+
+### Quick Reference: Series (fallback)
+
+```
+polymarket get-series --series btc-5m     # show current slot (price, liquidity, seconds_remaining)
+polymarket get-series --list              # all 12 supported series
+```
+
+- Trade: `polymarket buy --market-id btc-5m --outcome up --amount 50` (auto-resolves slot)
+- Fast path: use `--token-id <id>` from `get-series` output + `--price` to skip market lookup (~500ms faster)
+- Token IDs change every slot — re-run `get-series` at each new slot before using `--token-id`
+- 5m/15m: NYSE hours only (9:30 AM–4:00 PM ET, Mon–Fri). 4h: 24/7.
+- Series intent: detect `<asset> + <interval>` in any order → `get-series --series <asset>-<interval>`
+
+### Quick Reference: Onboarding (fallback)
+
+1. **Connect wallet**: `onchainos wallet login your@email.com` → verify with `onchainos wallet addresses --chain 137`
+2. **Check access**: `polymarket check-access` — confirm `accessible: true` before topping up
+3. **Top up USDC.e**: bridge or withdraw to your Polygon address (no "Polymarket deposit" step — USDC.e is spent directly)
+4. **First trade**: `polymarket buy --market-id <id> --outcome <yes|no|up|down> --amount <usdc>`
+
+---
+
 ## Command Routing Table
 
 > **Extracting market ID from a URL**: Polymarket URLs look like `polymarket.com/event/<slug>` or `polymarket.com/event/<slug>/<condition_id>`. Use the slug (the human-readable string, e.g. `will-trump-win-2024`) directly as `--market-id`. If the URL contains a `0x`-prefixed condition_id, use that instead.
@@ -944,17 +595,6 @@ Binary (YES/NO) or categorical (multi-outcome) markets on elections, sports, tec
 
 ---
 
-## Notes on Neg Risk Markets
-
-Some markets (multi-outcome events) use `neg_risk: true`. For these:
-- The **Neg Risk CTF Exchange** (`0xC5d563A36AE78145C45a50134d48A1215220f80a`) and **Neg Risk Adapter** (`0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296`) are both used
-- On `buy`: the CLOB checks USDC.e allowance on both contracts — the plugin approves both when allowance is insufficient
-- On `sell`: the CLOB checks `setApprovalForAll` on both contracts — the plugin approves both via `approve_ctf(neg_risk=true)` if either is missing
-- The plugin handles all of this automatically based on the `neg_risk` field returned by market lookup APIs
-- Token IDs and prices function identically from the user's perspective
-
----
-
 ## Fee Structure
 
 | Market Category | Taker Fee |
@@ -971,4 +611,4 @@ Fees are deducted by the exchange from the received amount. The `feeRateBps` fie
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for full version history. Current version: **0.2.7** (2026-04-12).
+See [CHANGELOG.md](CHANGELOG.md) for full version history. Current version: **0.3.0** (2026-04-13).

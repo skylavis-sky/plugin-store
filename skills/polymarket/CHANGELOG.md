@@ -1,5 +1,18 @@
 # Polymarket Plugin Changelog
 
+### v0.3.0 (2026-04-13)
+
+- **feat**: User profile (`~/.config/polymarket/profile.json`) — Claude-managed persistent file covering all market types. Stores preferred asset, interval, amount, order style (always_limit, always_post_only, always_dry_run_first), custom trigger aliases, trade history, and inferred interest areas. Binary never reads or writes this file.
+- **feat**: Alias system — `aliases.trigger_phrases` maps user-defined phrases to series IDs (e.g. "btc candle" → "btc-5m"); `aliases.trade_specs` maps phrases to full trade specs. Checked before routing table on every request.
+- **feat**: Session-aware onboarding — `history.session_count` incremented at session start; `session_count` ≤ 1 triggers automatic load of `SKILL-onboarding.md`.
+- **feat**: Behavior-inferred interest areas — never surveys the user with abstract category questions. When intent is vague, runs `list-markets --limit 5` sorted by soonest `end_date` and presents closing-soon markets. User's choice implicitly reveals interests, which are saved to `preferences.interest_areas` for future sessions.
+- **feat**: Alias learning — after 3 trades on the same market/series in a session, proactively offers to save a shortcut phrase.
+- **feat**: SKILL.md modularized into three on-demand sub-files loaded via raw GitHub URL: `SKILL-series.md` (series trading, intent detection, token ID caching, profile-accelerated routing), `SKILL-orders.md` (buy/sell/cancel flags, pre-sell liquidity check, safety guards, order type guide, neg risk notes), `SKILL-onboarding.md` (quickstart, pre-flight, credential setup, env var overrides). Inline Quick Reference stubs in SKILL.md serve as offline fallback.
+- **feat (SKILL)**: Simplified `## Authentication` section — leads with "no API keys required; onchainos handles everything." Env var overrides demoted to a single-line footnote.
+- **feat (SKILL)**: `## User Profile & Personalization` section added to SKILL.md — teaches Claude the profile schema, preference application rules, alias resolution, interest area routing, post-trade write-back, and sanitization rules.
+- **feat (SKILL)**: `## Dynamic Context Loading` section added to SKILL.md — table of triggers → fetch URLs, plus Quick Reference stubs for orders, series, and onboarding.
+- **security**: Prompt injection guard for profile writes — API-sourced strings truncated to 60 chars; user-provided strings to 80 chars; control chars stripped; no raw `{}"` in user-provided fields; JSON round-trip validation before every write.
+
 ### v0.2.7 (2026-04-13) — patch fixes
 
 - **fix [N1]**: `get-series` on 4h series no longer reports wrong `session` and `trading_hours`. Root cause: `session` was computed using the NYSE hours check regardless of series type, and `trading_hours` was hardcoded to `"9:30 AM – 4:00 PM ET, Monday–Friday"` for all series. Fix: for `nyse_hours_only: false` series, `session` is always `"24/7 — market open"` and `trading_hours` is `"24/7"`. Also fixes the `interval` field for 4h series (now shows `"4 hours"` instead of `"240 minutes"`).
