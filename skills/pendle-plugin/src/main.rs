@@ -55,7 +55,7 @@ enum Commands {
         #[arg(long)]
         market: String,
 
-        /// Time frame: 1D, 1W, 1M
+        /// Time frame for historical data: 1D (1 day), 1W (1 week), 1M (1 month)
         #[arg(long)]
         time_frame: Option<String>,
     },
