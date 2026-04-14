@@ -1,7 +1,7 @@
 ---
 name: compound-v3-plugin
 description: "Compound V3 (Comet) lending plugin: supply collateral, borrow/repay the base asset, and claim COMP rewards. Trigger phrases: compound supply, compound borrow, compound repay, compound withdraw, compound rewards, compound position, compound market."
-version: "0.2.4"
+version: "0.2.5"
 author: "skylavis-sky"
 tags:
   - lending
@@ -24,7 +24,7 @@ tags:
 # Check for skill updates (1-hour cache)
 UPDATE_CACHE="$HOME/.plugin-store/update-cache/compound-v3-plugin"
 CACHE_MAX=3600
-LOCAL_VER="0.2.4"
+LOCAL_VER="0.2.5"
 DO_CHECK=true
 
 if [ -f "$UPDATE_CACHE" ]; then
@@ -97,7 +97,7 @@ case "${OS}_${ARCH}" in
   mingw*_aarch64|msys*_aarch64|cygwin*_aarch64)  TARGET="aarch64-pc-windows-msvc"; EXT=".exe" ;;
 esac
 mkdir -p ~/.local/bin
-curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/compound-v3-plugin@0.2.4/compound-v3-plugin-${TARGET}${EXT}" -o ~/.local/bin/.compound-v3-plugin-core${EXT}
+curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/compound-v3-plugin@0.2.5/compound-v3-plugin-${TARGET}${EXT}" -o ~/.local/bin/.compound-v3-plugin-core${EXT}
 chmod +x ~/.local/bin/.compound-v3-plugin-core${EXT}
 
 # Symlink CLI name to universal launcher
@@ -105,7 +105,7 @@ ln -sf "$LAUNCHER" ~/.local/bin/compound-v3-plugin
 
 # Register version
 mkdir -p "$HOME/.plugin-store/managed"
-echo "0.2.4" > "$HOME/.plugin-store/managed/compound-v3-plugin"
+echo "0.2.5" > "$HOME/.plugin-store/managed/compound-v3-plugin"
 ```
 
 ### Report install (auto-injected, runs once)
@@ -125,7 +125,7 @@ if [ ! -f "$REPORT_FLAG" ]; then
   # Report to Vercel stats
   curl -s -X POST "https://plugin-store-dun.vercel.app/install" \
     -H "Content-Type: application/json" \
-    -d '{"name":"compound-v3-plugin","version":"0.2.4"}' >/dev/null 2>&1 || true
+    -d '{"name":"compound-v3-plugin","version":"0.2.5"}' >/dev/null 2>&1 || true
   # Report to OKX API (with HMAC-signed device token)
   curl -s -X POST "https://www.okx.com/priapi/v1/wallet/plugins/download/report" \
     -H "Content-Type: application/json" \
@@ -201,25 +201,31 @@ Returns supply balance, borrow balance, and whether the account is collateralize
 Supplying base asset (e.g. USDC) when debt exists will automatically repay debt first.
 
 ```bash
-# Preview (dry-run)
-compound-v3 --chain 8453 --market usdc --dry-run supply \
+# Preview (no --confirm — shows what would happen and exits)
+compound-v3 --chain 8453 --market usdc supply \
   --asset 0x4200000000000000000000000000000000000006 \
   --amount 0.1
 
-# Execute
-compound-v3 --chain 8453 --market usdc supply \
+# Execute on-chain (requires --confirm)
+compound-v3 --chain 8453 --market usdc --confirm supply \
   --asset 0x4200000000000000000000000000000000000006 \
   --amount 0.1 \
   --from 0xYourWallet
+
+# Dry-run (shows calldata without submitting)
+compound-v3 --chain 8453 --market usdc --dry-run supply \
+  --asset 0x4200000000000000000000000000000000000006 \
+  --amount 0.1
 ```
 
 **Execution flow:**
-1. Run with `--dry-run` to preview the approve + supply steps
+1. Run without `--confirm` to preview the approve + supply steps
 2. **Ask user to confirm** the supply amount, asset, and market before proceeding
-3. Execute ERC-20 approve: `onchainos wallet contract-call` → token.approve(comet, amount)
-4. Wait 3 seconds (nonce safety)
-5. Execute supply: `onchainos wallet contract-call` → Comet.supply(asset, amount)
-6. Report approve txHash, supply txHash, and updated supply balance
+3. Re-run with `--confirm` to execute on-chain
+4. Execute ERC-20 approve: `onchainos wallet contract-call` → token.approve(comet, amount)
+5. Wait 3 seconds (nonce safety)
+6. Execute supply: `onchainos wallet contract-call` → Comet.supply(asset, amount)
+7. Report approve txHash, supply txHash, and updated supply balance
 
 ---
 
@@ -228,19 +234,23 @@ compound-v3 --chain 8453 --market usdc supply \
 Borrow is implemented as `Comet.withdraw(base_asset, amount)`. No ERC-20 approve required. Collateral must be supplied first.
 
 ```bash
-# Preview (dry-run)
-compound-v3 --chain 8453 --market usdc --dry-run borrow --amount 100.0
+# Preview (no --confirm — shows what would happen and exits)
+compound-v3 --chain 8453 --market usdc borrow --amount 100.0
 
-# Execute
-compound-v3 --chain 8453 --market usdc borrow --amount 100.0 --from 0xYourWallet
+# Execute on-chain (requires --confirm)
+compound-v3 --chain 8453 --market usdc --confirm borrow --amount 100.0 --from 0xYourWallet
+
+# Dry-run (shows calldata without submitting)
+compound-v3 --chain 8453 --market usdc --dry-run borrow --amount 100.0
 ```
 
 **Execution flow:**
 1. Pre-check: `isBorrowCollateralized` must be true; amount must be ≥ `baseBorrowMin`
-2. Run with `--dry-run` to preview
+2. Run without `--confirm` to preview
 3. **Ask user to confirm** the borrow amount and ensure they understand debt accrues interest
-4. Execute: `onchainos wallet contract-call` → Comet.withdraw(base_asset, amount)
-5. Report txHash and updated borrow balance
+4. Re-run with `--confirm` to execute on-chain
+5. Execute: `onchainos wallet contract-call` → Comet.withdraw(base_asset, amount)
+6. Report txHash and updated borrow balance
 
 ---
 
@@ -249,24 +259,28 @@ compound-v3 --chain 8453 --market usdc borrow --amount 100.0 --from 0xYourWallet
 Repay uses `Comet.supply(base_asset, amount)`. The plugin reads `borrowBalanceOf` and uses `min(borrow, wallet_balance)` to avoid overflow revert.
 
 ```bash
-# Preview repay-all (dry-run)
+# Preview repay-all (no --confirm — shows what would happen and exits)
+compound-v3 --chain 8453 --market usdc repay
+
+# Execute repay-all (requires --confirm)
+compound-v3 --chain 8453 --market usdc --confirm repay --from 0xYourWallet
+
+# Execute partial repay (requires --confirm)
+compound-v3 --chain 8453 --market usdc --confirm repay --amount 50.0 --from 0xYourWallet
+
+# Dry-run (shows calldata without submitting)
 compound-v3 --chain 8453 --market usdc --dry-run repay
-
-# Execute repay-all
-compound-v3 --chain 8453 --market usdc repay --from 0xYourWallet
-
-# Execute partial repay
-compound-v3 --chain 8453 --market usdc repay --amount 50.0 --from 0xYourWallet
 ```
 
 **Execution flow:**
 1. Read current `borrowBalanceOf` and wallet token balance
-2. Run with `--dry-run` to preview
+2. Run without `--confirm` to preview
 3. **Ask user to confirm** the repay amount before proceeding
-4. Execute ERC-20 approve: `onchainos wallet contract-call` → token.approve(comet, amount)
-5. Wait 3 seconds
-6. Execute repay: `onchainos wallet contract-call` → Comet.supply(base_asset, repay_amount)
-7. Report approve txHash, repay txHash, and remaining debt
+4. Re-run with `--confirm` to execute on-chain
+5. Execute ERC-20 approve: `onchainos wallet contract-call` → token.approve(comet, amount)
+6. Wait 3 seconds
+7. Execute repay: `onchainos wallet contract-call` → Comet.supply(base_asset, repay_amount)
+8. Report approve txHash, repay txHash, and remaining debt
 
 ---
 
@@ -275,24 +289,30 @@ compound-v3 --chain 8453 --market usdc repay --amount 50.0 --from 0xYourWallet
 Withdraw requires zero outstanding debt. The plugin enforces this with a pre-check.
 
 ```bash
-# Preview (dry-run)
-compound-v3 --chain 8453 --market usdc --dry-run withdraw \
+# Preview (no --confirm — shows what would happen and exits)
+compound-v3 --chain 8453 --market usdc withdraw \
   --asset 0x4200000000000000000000000000000000000006 \
   --amount 0.1
 
-# Execute
-compound-v3 --chain 8453 --market usdc withdraw \
+# Execute on-chain (requires --confirm)
+compound-v3 --chain 8453 --market usdc --confirm withdraw \
   --asset 0x4200000000000000000000000000000000000006 \
   --amount 0.1 \
   --from 0xYourWallet
+
+# Dry-run (shows calldata without submitting)
+compound-v3 --chain 8453 --market usdc --dry-run withdraw \
+  --asset 0x4200000000000000000000000000000000000006 \
+  --amount 0.1
 ```
 
 **Execution flow:**
 1. Pre-check: `borrowBalanceOf` must be 0. If debt exists, prompt user to repay first.
-2. Run with `--dry-run` to preview
+2. Run without `--confirm` to preview
 3. **Ask user to confirm** the withdrawal before proceeding
-4. Execute: `onchainos wallet contract-call` → Comet.withdraw(asset, amount)
-5. Report txHash
+4. Re-run with `--confirm` to execute on-chain
+5. Execute: `onchainos wallet contract-call` → Comet.withdraw(asset, amount)
+6. Report txHash
 
 ---
 
@@ -301,19 +321,23 @@ compound-v3 --chain 8453 --market usdc withdraw \
 Rewards are claimed via the CometRewards contract. The plugin checks `getRewardOwed` first — if zero, it returns a friendly message without submitting any transaction.
 
 ```bash
-# Preview (dry-run)
-compound-v3 --chain 1 --market usdc --dry-run claim-rewards
+# Preview (no --confirm — shows what would happen and exits)
+compound-v3 --chain 1 --market usdc claim-rewards
 
-# Execute
-compound-v3 --chain 1 --market usdc claim-rewards --from 0xYourWallet
+# Execute on-chain (requires --confirm)
+compound-v3 --chain 1 --market usdc --confirm claim-rewards --from 0xYourWallet
+
+# Dry-run (shows calldata without submitting)
+compound-v3 --chain 1 --market usdc --dry-run claim-rewards
 ```
 
 **Execution flow:**
 1. Pre-check: call `CometRewards.getRewardOwed(comet, wallet)`. If 0, return "No claimable rewards."
-2. Show reward amount to user
+2. Show reward amount to user (preview mode — no `--confirm`)
 3. **Ask user to confirm** before claiming
-4. Execute: `onchainos wallet contract-call` → CometRewards.claimTo(comet, wallet, wallet, true)
-5. Report txHash and confirmation
+4. Re-run with `--confirm` to execute on-chain
+5. Execute: `onchainos wallet contract-call` → CometRewards.claimTo(comet, wallet, wallet, true)
+6. Report txHash and confirmation
 
 ---
 
@@ -331,12 +355,25 @@ Never use `uint256.max` for repay. The plugin reads `borrowBalanceOf` and uses `
 **withdraw requires zero debt**
 Attempting to withdraw collateral while in debt will revert. The plugin checks `borrowBalanceOf` and blocks the withdraw with a clear error message if debt is outstanding.
 
+## Confirm Gate
+
+All write operations (`supply`, `borrow`, `repay`, `withdraw`, `claim-rewards`) require `--confirm` to execute on-chain. Without `--confirm`, the command prints a JSON preview of what would happen and exits. This is the default safe mode.
+
+```bash
+# Preview (default — no --confirm)
+compound-v3 --chain 8453 --market usdc supply --asset 0x... --amount 1.0
+# → prints preview JSON and exits
+
+# Execute on-chain
+compound-v3 --chain 8453 --market usdc --confirm supply --asset 0x... --amount 1.0
+```
+
 ## Dry-Run Mode
 
-All write operations support `--dry-run`. In dry-run mode:
+All write operations also support `--dry-run`. In dry-run mode:
 - No transactions are submitted
 - The expected calldata, steps, and amounts are returned as JSON
-- Use this to preview before asking for user confirmation
+- Use this to inspect calldata before execution
 
 ## Do NOT use for
 

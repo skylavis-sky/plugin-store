@@ -9,6 +9,7 @@ pub async fn run(
     amount_str: &str,  // human-readable amount (e.g. "0.1" for 0.1 USDC)
     from: Option<String>,
     dry_run: bool,
+    confirm: bool,
 ) -> Result<()> {
     let cfg = get_market_config(chain_id, market)?;
     let amount = rpc::parse_human_amount(amount_str, cfg.base_asset_decimals)?;
@@ -32,6 +33,30 @@ pub async fn run(
     let base_padded = rpc::pad_address(cfg.base_asset);
     let amount_hex = rpc::pad_u128(amount);
     let borrow_calldata = format!("0xf3fef3a3{}{}", base_padded, amount_hex);
+
+    // Confirm gate: show preview and exit if --confirm not given (and not dry-run)
+    if !dry_run && !confirm {
+        let decimals_factor = 10u128.pow(cfg.base_asset_decimals as u32) as f64;
+        let result = serde_json::json!({
+            "ok": true,
+            "preview": true,
+            "operation": "borrow",
+            "chain_id": chain_id,
+            "market": market,
+            "base_asset": cfg.base_asset_symbol,
+            "amount": amount_str,
+            "amount_raw": amount.to_string(),
+            "amount_human": format!("{:.6}", amount as f64 / decimals_factor),
+            "comet": cfg.comet_proxy,
+            "pending_transactions": 1,
+            "transactions": [
+                {"step": 1, "action": "Comet.withdraw (borrow base asset)", "comet": cfg.comet_proxy, "base_asset": cfg.base_asset, "amount_raw": amount.to_string(), "calldata": borrow_calldata}
+            ],
+            "note": "Re-run with --confirm to execute this transaction on-chain."
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
 
     if dry_run {
         let decimals_factor = 10u128.pow(cfg.base_asset_decimals as u32) as f64;

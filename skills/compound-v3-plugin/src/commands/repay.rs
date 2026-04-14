@@ -9,6 +9,7 @@ pub async fn run(
     amount_str: Option<&str>, // None = repay all; human-readable (e.g. "5.0")
     from: Option<String>,
     dry_run: bool,
+    confirm: bool,
 ) -> Result<()> {
     let cfg = get_market_config(chain_id, market)?;
 
@@ -68,6 +69,31 @@ pub async fn run(
     let base_padded = rpc::pad_address(cfg.base_asset);
     let amount_hex = rpc::pad_u128(repay_amount);
     let repay_calldata = format!("0xf2b9fdb8{}{}", base_padded, amount_hex);
+
+    // Confirm gate: show preview and exit if --confirm not given (and not dry-run)
+    if !dry_run && !confirm {
+        let result = serde_json::json!({
+            "ok": true,
+            "preview": true,
+            "operation": "repay",
+            "chain_id": chain_id,
+            "market": market,
+            "base_asset": cfg.base_asset_symbol,
+            "repay_amount": format!("{:.6}", repay_amount as f64 / decimals_factor),
+            "repay_amount_raw": repay_amount.to_string(),
+            "borrow_balance": format!("{:.6}", borrow_balance as f64 / decimals_factor),
+            "wallet_balance": format!("{:.6}", wallet_balance as f64 / decimals_factor),
+            "comet": cfg.comet_proxy,
+            "pending_transactions": 2,
+            "transactions": [
+                {"step": 1, "action": "ERC-20 approve", "token": cfg.base_asset, "spender": cfg.comet_proxy, "amount_raw": repay_amount.to_string()},
+                {"step": 2, "action": "Comet.supply (repay)", "comet": cfg.comet_proxy, "base_asset": cfg.base_asset, "amount_raw": repay_amount.to_string(), "calldata": repay_calldata}
+            ],
+            "note": "Re-run with --confirm to execute these transactions on-chain."
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
 
     if dry_run {
         let result = serde_json::json!({

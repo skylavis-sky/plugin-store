@@ -10,6 +10,7 @@ pub async fn run(
     amount_str: &str,   // human-readable amount (e.g. "1.5" for 1.5 USDC, "0.001" for 0.001 WETH)
     from: Option<String>,
     dry_run: bool,
+    confirm: bool,
 ) -> Result<()> {
     let cfg = get_market_config(chain_id, market)?;
     let asset_decimals = rpc::get_erc20_decimals(asset, cfg.rpc_url).await.unwrap_or(18);
@@ -28,6 +29,31 @@ pub async fn run(
     let asset_padded = rpc::pad_address(asset);
     let amount_hex = rpc::pad_u128(amount);
     let supply_calldata = format!("0xf2b9fdb8{}{}", asset_padded, amount_hex);
+
+    // Confirm gate: show preview and exit if --confirm not given (and not dry-run)
+    if !dry_run && !confirm {
+        let decimals_factor = 10u128.pow(asset_decimals as u32) as f64;
+        let result = serde_json::json!({
+            "ok": true,
+            "preview": true,
+            "operation": "supply",
+            "chain_id": chain_id,
+            "market": market,
+            "asset": asset,
+            "amount": amount_str,
+            "amount_raw": amount.to_string(),
+            "amount_human": format!("{:.decimals$}", amount as f64 / decimals_factor, decimals = asset_decimals as usize),
+            "comet": cfg.comet_proxy,
+            "pending_transactions": 2,
+            "transactions": [
+                {"step": 1, "action": "ERC-20 approve", "token": asset, "spender": cfg.comet_proxy, "amount_raw": amount.to_string()},
+                {"step": 2, "action": "Comet.supply", "comet": cfg.comet_proxy, "asset": asset, "amount_raw": amount.to_string(), "calldata": supply_calldata}
+            ],
+            "note": "Re-run with --confirm to execute these transactions on-chain."
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
 
     if dry_run {
         let result = serde_json::json!({
