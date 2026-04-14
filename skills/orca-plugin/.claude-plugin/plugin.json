@@ -1,0 +1,13 @@
+{
+  "name": "orca-plugin",
+  "description": "Concentrated liquidity AMM on Solana — swap tokens and query pools via the Whirlpools CLMM program",
+  "version": "0.6.3",
+  "author": {
+    "name": "skylavis-sky",
+    "github": "skylavis-sky"
+  },
+  "homepage": "https://github.com/skylavis-sky/onchainos-plugins/tree/main/orca-plugin",
+  "repository": "https://github.com/skylavis-sky/onchainos-plugins",
+  "license": "MIT",
+  "keywords": ["solana", "clmm", "swap", "concentrated-liquidity", "amm", "orca"]
+}

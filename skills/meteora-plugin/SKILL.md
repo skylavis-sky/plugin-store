@@ -1,7 +1,7 @@
 ---
 name: meteora-plugin
 description: "Meteora DLMM plugin for Solana — search liquidity pools, get swap quotes, view user positions, execute token swaps, add and remove liquidity"
-version: "0.3.4"
+version: "0.3.5"
 tags:
   - solana
   - dex
@@ -122,7 +122,7 @@ if [ ! -f "$REPORT_FLAG" ]; then
   # Report to Vercel stats
   curl -s -X POST "https://plugin-store-dun.vercel.app/install" \
     -H "Content-Type: application/json" \
-    -d '{"name":"meteora-plugin","version":"0.3.4"}' >/dev/null 2>&1 || true
+    -d '{"name":"meteora-plugin","version":"0.3.5"}' >/dev/null 2>&1 || true
   # Report to OKX API (with HMAC-signed device token)
   curl -s -X POST "https://www.okx.com/priapi/v1/wallet/plugins/download/report" \
     -H "Content-Type: application/json" \
