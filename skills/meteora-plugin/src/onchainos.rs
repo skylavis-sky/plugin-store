@@ -89,14 +89,20 @@ pub fn dex_swap_execute_solana(
 /// onchainos signs with the currently logged-in wallet and broadcasts to mainnet.
 /// Chain 501 = Solana mainnet.
 /// `program_id` is passed as `--to` (the primary program being called).
-pub fn contract_call_solana(unsigned_tx_b58: &str, program_id: &str) -> anyhow::Result<Value> {
+/// `force` bypasses preflight simulation — required when new PDAs are created in the tx
+/// (e.g. add-liquidity initialising a position PDA that doesn't exist at simulation time).
+pub fn contract_call_solana(unsigned_tx_b58: &str, program_id: &str, force: bool) -> anyhow::Result<Value> {
+    let mut args = vec![
+        "wallet", "contract-call",
+        "--chain", "501",
+        "--to", program_id,
+        "--unsigned-tx", unsigned_tx_b58,
+    ];
+    if force {
+        args.push("--force");
+    }
     let output = Command::new("onchainos")
-        .args([
-            "wallet", "contract-call",
-            "--chain", "501",
-            "--to", program_id,
-            "--unsigned-tx", unsigned_tx_b58,
-        ])
+        .args(&args)
         .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

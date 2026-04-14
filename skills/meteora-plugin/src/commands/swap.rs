@@ -23,44 +23,62 @@ pub struct SwapArgs {
     /// Wallet address (Solana pubkey). If omitted, uses the currently logged-in wallet.
     #[arg(long)]
     pub wallet: Option<String>,
+
+    /// Confirm execution — required to execute on-chain. Without this flag, shows a preview.
+    #[arg(long)]
+    pub confirm: bool,
+
+    /// Bypass the price-impact safety block (use with caution).
+    #[arg(long)]
+    pub force: bool,
 }
 
 pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
-    // dry_run: show quote instead of executing swap
-    if dry_run {
-        let raw = onchainos::dex_quote_solana(
-            &args.from_token,
-            &args.to_token,
-            &args.amount,
-        )?;
+    use crate::config::PRICE_IMPACT_WARN_THRESHOLD;
 
-        // Extract meaningful fields from data[0]
-        let data0 = &raw["data"][0];
-        let out_amount_raw = data0["toTokenAmount"]
-            .as_str()
-            .or_else(|| data0["outAmount"].as_str())
-            .unwrap_or("unknown");
-        let to_decimals = data0["toToken"]["decimal"]
-            .as_str()
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(6);
-        let to_symbol = data0["toToken"]["tokenSymbol"].as_str().unwrap_or("unknown");
-        let from_symbol = data0["fromToken"]["tokenSymbol"].as_str().unwrap_or("unknown");
-        let price_impact: f64 = data0["priceImpactPercent"]
-            .as_str()
-            .and_then(|s| s.parse::<f64>().ok())
-            .map(f64::abs)
-            .unwrap_or(0.0);
-        let to_amount_readable = out_amount_raw
-            .parse::<u128>()
-            .ok()
-            .map(|r| format!("{:.6}", r as f64 / 10f64.powi(to_decimals as i32)))
-            .unwrap_or_else(|| "unknown".to_string());
+    // Fetch quote for all paths (dry_run, preview, and execution)
+    let raw = onchainos::dex_quote_solana(
+        &args.from_token,
+        &args.to_token,
+        &args.amount,
+    )?;
+    let data0 = &raw["data"][0];
+    let out_amount_raw = data0["toTokenAmount"]
+        .as_str()
+        .or_else(|| data0["outAmount"].as_str())
+        .unwrap_or("unknown");
+    let to_decimals = data0["toToken"]["decimal"]
+        .as_str()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(6);
+    let to_symbol = data0["toToken"]["tokenSymbol"].as_str().unwrap_or("unknown");
+    let from_symbol = data0["fromToken"]["tokenSymbol"].as_str().unwrap_or("unknown");
+    let price_impact: f64 = data0["priceImpactPercent"]
+        .as_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(f64::abs)
+        .unwrap_or(0.0);
+    let to_amount_readable = out_amount_raw
+        .parse::<u128>()
+        .ok()
+        .map(|r| format!("{:.6}", r as f64 / 10f64.powi(to_decimals as i32)))
+        .unwrap_or_else(|| "unknown".to_string());
 
+    // Price impact safety block (bypassed with --force)
+    if price_impact >= PRICE_IMPACT_WARN_THRESHOLD && !args.force {
+        anyhow::bail!(
+            "Price impact {:.2}% exceeds {}% threshold. Swap aborted to protect funds.              Pass --force to bypass.",
+            price_impact,
+            PRICE_IMPACT_WARN_THRESHOLD
+        );
+    }
+
+    // dry_run or confirm gate — show enriched preview
+    if dry_run || !args.confirm {
         let output = serde_json::json!({
             "ok": true,
-            "dry_run": true,
-            "message": "Dry run: showing quote only. No transaction submitted.",
+            "dry_run": dry_run,
+            "message": "Preview: re-run with --confirm to execute on-chain.",
             "from_token": args.from_token,
             "from_symbol": from_symbol,
             "to_token": args.to_token,
@@ -69,12 +87,13 @@ pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
             "estimated_output": to_amount_readable,
             "estimated_output_raw": out_amount_raw,
             "price_impact_pct": price_impact,
+            "note": "Re-run with --confirm to execute on-chain.",
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
 
-    // Resolve wallet address AFTER dry_run guard
+    // Resolve wallet address AFTER dry_run/confirm guard
     let wallet = if let Some(w) = &args.wallet {
         w.clone()
     } else {

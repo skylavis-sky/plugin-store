@@ -29,6 +29,10 @@ pub struct RemoveLiquidityArgs {
     /// Wallet address. If omitted, uses the currently logged-in onchainos wallet.
     #[arg(long)]
     pub wallet: Option<String>,
+
+    /// Confirm execution — required to execute on-chain. Without this flag, shows a preview.
+    #[arg(long)]
+    pub confirm: bool,
 }
 
 pub async fn execute(args: &RemoveLiquidityArgs, dry_run: bool) -> anyhow::Result<()> {
@@ -100,15 +104,16 @@ pub async fn execute(args: &RemoveLiquidityArgs, dry_run: bool) -> anyhow::Resul
         let user_token_x_pk: Pubkey = if ata_x_exists { user_token_x.parse()? } else { ata_x };
         let user_token_y_pk: Pubkey = if ata_y_exists { user_token_y.parse()? } else { ata_y };
 
-        if dry_run {
+        if dry_run || !args.confirm {
             let output = serde_json::json!({
                 "ok": true,
-                "dry_run": true,
-                "message": "Dry run: position is empty, will claim pending fees then close account.",
+                "dry_run": dry_run,
+                "message": "Position is empty — will claim pending fees then close account.",
                 "position": args.position,
                 "lower_bin_id": lower_bin_id,
                 "upper_bin_id": upper_bin_id,
                 "will_close_position": true,
+                "note": "Re-run with --confirm to execute on-chain.",
             });
             println!("{}", serde_json::to_string_pretty(&output)?);
             return Ok(());
@@ -132,7 +137,7 @@ pub async fn execute(args: &RemoveLiquidityArgs, dry_run: bool) -> anyhow::Resul
         let instructions = instructions;
         let tx_b58 = meteora_ix::build_tx_b58(&instructions, &wallet, blockhash)?;
         eprintln!("[debug] close-only unsigned_tx_b58={}...", &tx_b58[..32]);
-        let result = onchainos::contract_call_solana(&tx_b58, &meteora_ix::DLMM_PROGRAM.to_string())?;
+        let result = onchainos::contract_call_solana(&tx_b58, &meteora_ix::DLMM_PROGRAM.to_string(), false)?;
         let tx_hash = onchainos::extract_tx_hash(&result);
         let ok = result["ok"].as_bool().unwrap_or(false)
             || result["data"]["ok"].as_bool().unwrap_or(false)
@@ -170,12 +175,12 @@ pub async fn execute(args: &RemoveLiquidityArgs, dry_run: bool) -> anyhow::Resul
     let bin_array_lower = meteora_ix::bin_array_pda(&lb_pair, lower_idx);
     let bin_array_upper = meteora_ix::bin_array_pda(&lb_pair, upper_idx);
 
-    // ── 6. Dry-run output ────────────────────────────────────────────────────
-    if dry_run {
+    // ── 6. Dry-run / confirm-gate output ────────────────────────────────────
+    if dry_run || !args.confirm {
         let output = json!({
             "ok": true,
-            "dry_run": true,
-            "message": "Dry run: preview only, no transaction submitted.",
+            "dry_run": dry_run,
+            "message": "Preview: remove liquidity from Meteora DLMM position.",
             "pool": args.pool,
             "position": args.position,
             "wallet": wallet_str,
@@ -190,6 +195,7 @@ pub async fn execute(args: &RemoveLiquidityArgs, dry_run: bool) -> anyhow::Resul
             "user_token_y": user_token_y,
             "bin_array_lower_pda": bin_array_lower.to_string(),
             "bin_array_upper_pda": bin_array_upper.to_string(),
+            "note": "Re-run with --confirm to execute on-chain.",
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
@@ -255,7 +261,7 @@ pub async fn execute(args: &RemoveLiquidityArgs, dry_run: bool) -> anyhow::Resul
     eprintln!("[debug] unsigned_tx_b58={}...", &tx_b58[..32]);
     eprintln!("[debug] num_instructions={}", instructions.len());
 
-    let result = onchainos::contract_call_solana(&tx_b58, &meteora_ix::DLMM_PROGRAM.to_string())?;
+    let result = onchainos::contract_call_solana(&tx_b58, &meteora_ix::DLMM_PROGRAM.to_string(), false)?;
     let tx_hash = onchainos::extract_tx_hash(&result);
     let ok = result["ok"].as_bool().unwrap_or(false)
         || result["data"]["ok"].as_bool().unwrap_or(false)

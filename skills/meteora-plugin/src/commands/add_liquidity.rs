@@ -29,6 +29,10 @@ pub struct AddLiquidityArgs {
     /// Wallet address (Solana pubkey). If omitted, uses the currently logged-in onchainos wallet.
     #[arg(long)]
     pub wallet: Option<String>,
+
+    /// Confirm execution — required to execute on-chain. Without this flag, shows a preview.
+    #[arg(long)]
+    pub confirm: bool,
 }
 
 pub async fn execute(args: &AddLiquidityArgs, dry_run: bool) -> anyhow::Result<()> {
@@ -146,8 +150,8 @@ pub async fn execute(args: &AddLiquidityArgs, dry_run: bool) -> anyhow::Result<(
     let user_token_x: Pubkey = token_x_acct.parse()?;
     let user_token_y: Pubkey = token_y_acct.parse()?;
 
-    // ── 8. Dry-run output ────────────────────────────────────────────────────
-    if dry_run {
+    // ── 8. Dry-run / confirm-gate output ────────────────────────────────────
+    if dry_run || !args.confirm {
         let output = json!({
             "ok": true,
             "dry_run": true,
@@ -180,6 +184,7 @@ pub async fn execute(args: &AddLiquidityArgs, dry_run: bool) -> anyhow::Result<(
             "user_token_x_exists": ata_x_exists,
             "user_token_y_account": user_token_y.to_string(),
             "user_token_y_exists": ata_y_exists,
+            "note": "Re-run with --confirm to execute on-chain.",
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
@@ -298,7 +303,7 @@ pub async fn execute(args: &AddLiquidityArgs, dry_run: bool) -> anyhow::Result<(
         eprintln!("[debug] unsigned_tx_b58={}", &tx_b58[..32]);
         eprintln!("[debug] num_instructions={}", instructions.len());
 
-        let result = onchainos::contract_call_solana(&tx_b58, &meteora_ix::DLMM_PROGRAM.to_string())?;
+        let result = onchainos::contract_call_solana(&tx_b58, &meteora_ix::DLMM_PROGRAM.to_string(), true)?;
         let ok = result["ok"].as_bool().unwrap_or(false)
             || result["data"]["ok"].as_bool().unwrap_or(false);
 
