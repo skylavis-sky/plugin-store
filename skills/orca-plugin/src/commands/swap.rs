@@ -29,6 +29,10 @@ pub struct SwapArgs {
     /// Skip security scan of output token (not recommended)
     #[arg(long)]
     pub skip_security_check: bool,
+
+    /// Confirm execution — required to execute on-chain. Without this flag, shows a preview.
+    #[arg(long)]
+    pub confirm: bool,
 }
 
 #[derive(Serialize)]
@@ -45,36 +49,24 @@ struct SwapOutput {
     amount: f64,
     slippage_bps: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    estimated_output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     estimated_price_impact_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fee_rate_pct: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     warning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pool_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
 }
 
 pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
-    // ─── dry_run guard — wallet resolution must come AFTER this block ───
-    if dry_run {
-        let output = SwapOutput {
-            ok: true,
-            dry_run: Some(true),
-            tx_hash: None,
-            solscan_url: None,
-            from_token: args.from_token.clone(),
-            to_token: args.to_token.clone(),
-            amount: args.amount,
-            slippage_bps: args.slippage_bps,
-            estimated_price_impact_pct: None,
-            warning: Some("dry_run=true — transaction not submitted".to_string()),
-            error: None,
-            pool_address: None,
-        };
-        println!("{}", serde_json::to_string_pretty(&output)?);
-        return Ok(());
-    }
-
     // ─── Security scan of output token ───
     if !args.skip_security_check {
         let to_check = if args.to_token == SOL_NATIVE_MINT {
@@ -93,13 +85,17 @@ pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
                     to_token: args.to_token.clone(),
                     amount: args.amount,
                     slippage_bps: args.slippage_bps,
+                    estimated_output: None,
+                    minimum_output: None,
                     estimated_price_impact_pct: None,
+                    fee_rate_pct: None,
                     warning: None,
                     error: Some(format!(
                         "Security scan blocked token {}: high-risk token, swap aborted",
                         args.to_token
                     )),
                     pool_address: None,
+                    note: None,
                 };
                 println!("{}", serde_json::to_string_pretty(&output)?);
                 return Ok(());
@@ -114,7 +110,7 @@ pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
         }
     }
 
-    // ─── Fetch pool info for price impact estimation ───
+    // ─── Fetch pool info for price impact estimation (used by all paths) ───
     let client = reqwest::Client::new();
     let all_pools = api::fetch_all_pools(&client).await?;
 
@@ -136,23 +132,39 @@ pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let (best_pool_address, price_impact, pool_warning) = if let Some(pool) = matching.first() {
-        let price = pool.price.unwrap_or(0.0);
-        let tvl = pool.tvl.unwrap_or(1_000_000.0);
-        let impact = api::estimate_price_impact(args.amount * price.max(1.0), tvl);
-        let warn = if impact >= PRICE_IMPACT_WARN_THRESHOLD {
-            Some(format!("Estimated price impact {:.2}%", impact))
+    let (best_pool_address, price_impact, pool_warning, fee_rate_pct_opt, estimated_out, minimum_out) =
+        if let Some(pool) = matching.first() {
+            let price = pool.price.unwrap_or(0.0);
+            let tvl = pool.tvl.unwrap_or(1_000_000.0);
+            let impact = api::estimate_price_impact(args.amount * price.max(1.0), tvl);
+            let warn = if impact >= PRICE_IMPACT_WARN_THRESHOLD {
+                Some(format!("Estimated price impact {:.2}%", impact))
+            } else {
+                None
+            };
+            let fee_pct = pool.lp_fee_rate.map(|r| r * 100.0);
+            // estimated_output in output token units (approximate)
+            let est_out = if price > 0.0 {
+                Some(format!("{:.6}", args.amount / price))
+            } else {
+                None
+            };
+            // minimum_output accounting for slippage
+            let min_out = if let Some(ref est) = est_out {
+                est.parse::<f64>().ok().map(|v| {
+                    format!("{:.6}", v * (1.0 - args.slippage_bps as f64 / 10_000.0))
+                })
+            } else {
+                None
+            };
+            (Some(pool.address.clone()), impact, warn, fee_pct, est_out, min_out)
         } else {
-            None
+            eprintln!(
+                "No pool found for pair {} / {} — proceeding with swap anyway (onchainos will route)",
+                args.from_token, args.to_token
+            );
+            (None, 0.0, None, None, None, None)
         };
-        (Some(pool.address.clone()), impact, warn)
-    } else {
-        eprintln!(
-            "No pool found for pair {} / {} — proceeding with swap anyway (onchainos will route)",
-            args.from_token, args.to_token
-        );
-        (None, 0.0, None)
-    };
 
     // ─── Block if price impact is too high ───
     if price_impact >= PRICE_IMPACT_BLOCK_THRESHOLD {
@@ -165,13 +177,41 @@ pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
             to_token: args.to_token.clone(),
             amount: args.amount,
             slippage_bps: args.slippage_bps,
+            estimated_output: estimated_out,
+            minimum_output: minimum_out,
             estimated_price_impact_pct: Some(price_impact),
+            fee_rate_pct: fee_rate_pct_opt,
             warning: None,
             error: Some(format!(
                 "Price impact {:.2}% exceeds block threshold of {}%. Swap aborted.",
                 price_impact, PRICE_IMPACT_BLOCK_THRESHOLD
             )),
             pool_address: best_pool_address,
+            note: None,
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    // ─── dry_run or confirm gate — show enriched preview ───
+    if dry_run || !args.confirm {
+        let output = SwapOutput {
+            ok: true,
+            dry_run: Some(dry_run),
+            tx_hash: None,
+            solscan_url: None,
+            from_token: args.from_token.clone(),
+            to_token: args.to_token.clone(),
+            amount: args.amount,
+            slippage_bps: args.slippage_bps,
+            estimated_output: estimated_out,
+            minimum_output: minimum_out,
+            estimated_price_impact_pct: Some(price_impact),
+            fee_rate_pct: fee_rate_pct_opt,
+            warning: pool_warning,
+            error: None,
+            pool_address: best_pool_address,
+            note: Some("Re-run with --confirm to execute on-chain.".to_string()),
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
@@ -205,7 +245,10 @@ pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
         to_token: args.to_token.clone(),
         amount: args.amount,
         slippage_bps: args.slippage_bps,
+        estimated_output: estimated_out,
+        minimum_output: minimum_out,
         estimated_price_impact_pct: Some(price_impact),
+        fee_rate_pct: fee_rate_pct_opt,
         warning: pool_warning,
         error: if result["ok"].as_bool().unwrap_or(false) {
             None
@@ -216,6 +259,7 @@ pub async fn execute(args: &SwapArgs, dry_run: bool) -> anyhow::Result<()> {
                 .or_else(|| result["message"].as_str().map(|s| s.to_string()))
         },
         pool_address: best_pool_address,
+        note: None,
     };
 
     println!("{}", serde_json::to_string_pretty(&output)?);
