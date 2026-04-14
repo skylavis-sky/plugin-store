@@ -397,6 +397,7 @@ morpho --chain 1 repay --market-id 0xb323... --all --confirm
 - A 0.5% approval buffer is added to cover accrued interest between approval and repay transactions (1% buffer for `--all` mode).
 - Step 1 approves Morpho Blue to spend the loan token — submits immediately via `onchainos wallet contract-call --force`; waits for on-chain confirmation before proceeding.
 - Step 2 calls `repay(...)` — presents to user for confirmation via `onchainos wallet contract-call`.
+- **⚠️ Indexer lag (`--all`)**: The Morpho GraphQL API may lag 10–30 seconds behind on-chain state after opening or modifying a position. If you just opened a borrow position, wait at least 15–30 seconds before running `repay --all`. If `--all` reports zero debt, retry after waiting — the API may not yet reflect the new borrow.
 
 **Expected output:**
 <external-content>
@@ -572,6 +573,8 @@ morpho --chain 1 withdraw-collateral --market-id 0xb323... --all --confirm
 **What it does:**
 1. Fetches `MarketParams` from the Morpho GraphQL API
 2. Calls `withdrawCollateral(marketParams, assets, onBehalf, receiver)` — after user confirmation, submits via `onchainos wallet contract-call`
+
+> **⚠️ Indexer lag (`--all`)**: The Morpho GraphQL API may lag 10–30 seconds behind on-chain state after supplying collateral. If you just supplied collateral, wait at least 15–30 seconds before running `withdraw-collateral --all`. If `--all` reports zero collateral, retry after waiting — the API may not yet reflect the deposit. As a fallback, use `--amount` with the exact balance shown in `morpho positions`.
 
 **Expected output:**
 <external-content>
