@@ -615,6 +615,54 @@ pendle --chain <CHAIN_ID> [--dry-run] [--confirm] redeem-py \
 
 ---
 
+
+## Proactive Onboarding
+
+When a user signals they are **new or just installed** this plugin — e.g. "I just installed Pendle",
+"how do I get started with Pendle", "what can I do with Pendle" — **do not wait for them to ask
+specific questions.** Proactively walk them through the Quickstart in order, one step at a time,
+waiting for confirmation before proceeding to the next:
+
+1. **Choose chain** — ask the user which chain they want to use. Supported: Ethereum (1),
+   Arbitrum (42161). If unsure, suggest Arbitrum — it has the deepest Pendle liquidity and lower gas.
+   Use their answer for `<CHAIN>` in all subsequent steps.
+2. **Check wallet** — run `onchainos wallet addresses --chain <CHAIN>`. If no address is returned,
+   direct them to connect via `onchainos wallet login`. Do not proceed to write operations until a
+   wallet is confirmed.
+3. **Check balance** — run `onchainos wallet balance --chain <CHAIN>`. The user needs a token to
+   invest (e.g. ETH, USDC, weETH). If the balance looks insufficient, explain how to fund (bridge,
+   CEX withdrawal, or swap).
+4. **Explain PT vs YT** — Pendle splits yield-bearing tokens into two components. Briefly explain:
+   - **PT (Principal Token)**: trades at a discount to face value; redeems 1:1 for the underlying
+     at expiry. Buying PT locks in a **fixed yield** — ideal for users who want predictable returns.
+   - **YT (Yield Token)**: captures the variable yield accrued by the underlying until expiry.
+     Buying YT is a **leveraged bet on floating yield** — higher risk, suitable for advanced users.
+   Ask whether the user wants fixed yield (PT) or floating yield (YT). For most new users,
+   recommend PT as the safer starting point.
+5. **Browse markets** — run `pendle --chain <CHAIN> list-markets --active-only --limit 10` to show
+   available pools. Help the user pick a market that matches their token and risk appetite. Point
+   out the `expiry` date and `impliedApy` fields — the expiry is when PT redeems for its full
+   value; the implied APY is the annualised fixed rate the user locks in by buying PT now.
+6. **Preview first write** — run `pendle --chain <CHAIN> buy-pt --market <address> --token-in <address> --amount <amount> --wallet <wallet>` **without `--confirm`** so the user sees the preview
+   JSON (`"preview": true`) including `expected_pt_out`, `price_impact_pct`, and any required
+   approvals — before any on-chain action. Explain what each field means.
+7. **Execute** — once the user confirms, re-run the same command **with `--confirm`** to broadcast.
+   Report the approval tx hash(es) (if any) and the main `tx_hash`. Remind the user that on-chain
+   state may lag 15–30 seconds after broadcast.
+
+**Important caveats for new users:**
+- Pendle is more complex than a simple swap. Always surface the **expiry date** and explain that
+  PT held past expiry is redeemable at full face value, not tradeable at a premium.
+- The `--wallet` flag is required for all write commands — the plugin cannot auto-resolve the
+  active onchainos wallet.
+- `price_impact_pct` may appear elevated on small trades or cross-asset routes; always
+  cross-check `expected_pt_out` or `expected_token_out` before concluding the trade is bad.
+- Write commands require `--confirm` to execute on-chain; without it they show a safe preview.
+
+Do not dump all steps at once. Guide conversationally — confirm each step before moving on.
+
+---
+
 ## Quickstart
 
 New to pendle-plugin? Follow these steps from zero to your first fixed-yield PT purchase.
