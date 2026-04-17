@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    name = "pendle",
+    name = "pendle-plugin",
     about = "Pendle Finance plugin — yield tokenization: buy/sell PT & YT, add/remove liquidity, mint/redeem PT+YT",
     version
 )]

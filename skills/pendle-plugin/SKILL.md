@@ -74,9 +74,9 @@ if [ ! -f "$CHECKER" ]; then
   curl -fsSL "https://raw.githubusercontent.com/okx/plugin-store/main/scripts/update-checker.py" -o "$CHECKER" 2>/dev/null || true
 fi
 
-# Clean up old installation (both legacy pendle-plugin name and current pendle name)
-rm -f "$HOME/.local/bin/pendle-plugin" "$HOME/.local/bin/.pendle-plugin-core" 2>/dev/null
+# Clean up old installation (legacy pendle binary from v0.2.4–v0.2.5, and any stale pendle-plugin)
 rm -f "$HOME/.local/bin/pendle" "$HOME/.local/bin/.pendle-core" 2>/dev/null
+rm -f "$HOME/.local/bin/pendle-plugin" "$HOME/.local/bin/.pendle-plugin-core" 2>/dev/null
 
 # Download binary
 OS=$(uname -s | tr A-Z a-z)
@@ -94,11 +94,11 @@ case "${OS}_${ARCH}" in
   mingw*_aarch64|msys*_aarch64|cygwin*_aarch64)  TARGET="aarch64-pc-windows-msvc"; EXT=".exe" ;;
 esac
 mkdir -p ~/.local/bin
-curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/pendle-plugin@0.2.6/pendle-${TARGET}${EXT}" -o ~/.local/bin/.pendle-core${EXT}
-chmod +x ~/.local/bin/.pendle-core${EXT}
+curl -fsSL "https://github.com/okx/plugin-store/releases/download/plugins/pendle-plugin@0.2.6/pendle-plugin-${TARGET}${EXT}" -o ~/.local/bin/.pendle-plugin-core${EXT}
+chmod +x ~/.local/bin/.pendle-plugin-core${EXT}
 
-# Symlink CLI name (binary is named 'pendle' since v0.2.4)
-ln -sf "$LAUNCHER" ~/.local/bin/pendle
+# Symlink CLI name to pendle-plugin
+ln -sf "$LAUNCHER" ~/.local/bin/pendle-plugin
 
 # Register version
 mkdir -p "$HOME/.plugin-store/managed"
@@ -159,8 +159,8 @@ fi
 
 **Global flags** (`--chain`, `--dry-run`, `--confirm`) **must come before the subcommand**:
 ```bash
-pendle --chain 42161 --dry-run buy-pt ...   # ✅ correct — global flags before subcommand
-pendle buy-pt --chain 42161 --dry-run ...   # ❌ will fail — clap requires global flags first
+pendle-plugin --chain 42161 --dry-run buy-pt ...   # ✅ correct — global flags before subcommand
+pendle-plugin buy-pt --chain 42161 --dry-run ...   # ❌ will fail — clap requires global flags first
 ```
 
 **Live execution internals**: All `onchainos wallet contract-call` invocations include `--force`. This is required to broadcast transactions; it is not user-facing.
@@ -190,8 +190,8 @@ ERC-20 approvals issued by this plugin use the **exact transaction amount** (`am
 Before executing any operation, verify:
 
 ```bash
-# 1. Check pendle binary is installed
-pendle --version
+# 1. Check pendle-plugin binary is installed
+pendle-plugin --version
 
 # 2. Check onchainos wallet is logged in
 onchainos wallet status
@@ -232,7 +232,7 @@ The binary handles approvals and the main transaction internally. If the command
 
 ```bash
 # 1. Get calldata via dry-run (includes router + calldata + requiredApprovals)
-pendle --chain <CHAIN_ID> --dry-run <command> ...
+pendle-plugin --chain <CHAIN_ID> --dry-run <command> ...
 
 # 2. Handle approvals from requiredApprovals (if any)
 onchainos wallet contract-call --chain <CHAIN_ID> --to <TOKEN_ADDR> --input-data <APPROVE_CALLDATA> --force
@@ -252,7 +252,7 @@ All write commands include `router` and `calldata` in their output for this purp
 **Trigger phrases:** "list Pendle markets", "show me Pendle pools", "what Pendle markets are available", "Pendle market list"
 
 ```bash
-pendle --chain <CHAIN_ID> list-markets [--chain-id <CHAIN_ID>] [--active-only] [--skip <N>] [--limit <N>] [--search <TERM>]
+pendle-plugin --chain <CHAIN_ID> list-markets [--chain-id <CHAIN_ID>] [--active-only] [--skip <N>] [--limit <N>] [--search <TERM>]
 ```
 
 **Parameters:**
@@ -262,18 +262,18 @@ pendle --chain <CHAIN_ID> list-markets [--chain-id <CHAIN_ID>] [--active-only] [
 - `--limit` — max results (default 20, max 100)
 - `--search` — client-side filter by market name or PT/YT/SY symbol (fetches 100 results then filters)
 
-**Chain filter**: The global `--chain` flag automatically applies to `list-markets`. Use `pendle --chain 42161 list-markets` to get Arbitrum markets — no need to also pass `--chain-id 42161` separately.
+**Chain filter**: The global `--chain` flag automatically applies to `list-markets`. Use `pendle-plugin --chain 42161 list-markets` to get Arbitrum markets — no need to also pass `--chain-id 42161` separately.
 
 **Examples:**
 ```bash
 # List active Arbitrum markets (global --chain applies automatically)
-pendle --chain 42161 list-markets --active-only --limit 10
+pendle-plugin --chain 42161 list-markets --active-only --limit 10
 
 # Search for weETH markets
-pendle --chain 42161 list-markets --search weETH --active-only
+pendle-plugin --chain 42161 list-markets --search weETH --active-only
 
 # Search for USDC markets
-pendle --chain 42161 list-markets --search USDC --active-only
+pendle-plugin --chain 42161 list-markets --search USDC --active-only
 ```
 
 **Output:** JSON with `results` array (markets with `address`, `name`, `chainId`, `expiry`, `impliedApy`, `liquidity.usd`, `tradingVolume.usd`, PT/YT/SY addresses), `total`, and optionally `hint` when search yields useful disambiguation.
@@ -290,7 +290,7 @@ pendle --chain 42161 list-markets --search USDC --active-only
 **Trigger phrases:** "Pendle market details", "APY history for", "show me this Pendle pool"
 
 ```bash
-pendle --chain <CHAIN_ID> get-market --market <MARKET_ADDRESS> [--time-frame <hour|day|week>]
+pendle-plugin --chain <CHAIN_ID> get-market --market <MARKET_ADDRESS> [--time-frame <hour|day|week>]
 ```
 
 **Parameters:**
@@ -299,7 +299,7 @@ pendle --chain <CHAIN_ID> get-market --market <MARKET_ADDRESS> [--time-frame <ho
 
 **Example:**
 ```bash
-pendle --chain 42161 get-market --market 0xd1D7D99764f8a52Aff0BC88ab0b1B4B9c9A18Ef4 --time-frame day
+pendle-plugin --chain 42161 get-market --market 0xd1D7D99764f8a52Aff0BC88ab0b1B4B9c9A18Ef4 --time-frame day
 ```
 
 ---
@@ -311,7 +311,7 @@ pendle --chain 42161 get-market --market 0xd1D7D99764f8a52Aff0BC88ab0b1B4B9c9A18
 **Trigger phrases:** "what are the addresses for this Pendle market", "show me the PT address", "I have a market address and want to trade"
 
 ```bash
-pendle --chain <CHAIN_ID> get-market-info --market <MARKET_ADDRESS>
+pendle-plugin --chain <CHAIN_ID> get-market-info --market <MARKET_ADDRESS>
 ```
 
 **Parameters:**
@@ -319,7 +319,7 @@ pendle --chain <CHAIN_ID> get-market-info --market <MARKET_ADDRESS>
 
 **Example:**
 ```bash
-pendle --chain 42161 get-market-info --market 0x0934e592cee932b04b3967162b3cd6c85748c470
+pendle-plugin --chain 42161 get-market-info --market 0x0934e592cee932b04b3967162b3cd6c85748c470
 ```
 
 **Output includes:**
@@ -333,7 +333,7 @@ pendle --chain 42161 get-market-info --market 0x0934e592cee932b04b3967162b3cd6c8
 **Trigger phrases:** "my Pendle positions", "what PT do I hold", "Pendle portfolio", "show my yield tokens"
 
 ```bash
-pendle --chain <CHAIN_ID> get-positions [--user <ADDRESS>] [--filter-usd <MIN_USD>]
+pendle-plugin --chain <CHAIN_ID> get-positions [--user <ADDRESS>] [--filter-usd <MIN_USD>]
 ```
 
 **Parameters:**
@@ -342,7 +342,7 @@ pendle --chain <CHAIN_ID> get-positions [--user <ADDRESS>] [--filter-usd <MIN_US
 
 **Example:**
 ```bash
-pendle get-positions --filter-usd 1.0
+pendle-plugin get-positions --filter-usd 1.0
 ```
 
 ---
@@ -352,14 +352,14 @@ pendle get-positions --filter-usd 1.0
 **Trigger phrases:** "Pendle PT price", "YT token price", "LP token value", "how much is this PT worth"
 
 ```bash
-pendle get-asset-price [--ids <ADDR1,ADDR2>] [--asset-type <PT|YT|LP|SY>] [--chain-id <CHAIN_ID>]
+pendle-plugin get-asset-price [--ids <ADDR1,ADDR2>] [--asset-type <PT|YT|LP|SY>] [--chain-id <CHAIN_ID>]
 ```
 
 **Note:** IDs must be chain-prefixed: `42161-0x...` not bare `0x...`.
 
 **Example:**
 ```bash
-pendle get-asset-price --ids 42161-0xPT_ADDRESS --chain-id 42161
+pendle-plugin get-asset-price --ids 42161-0xPT_ADDRESS --chain-id 42161
 ```
 
 ---
@@ -369,7 +369,7 @@ pendle get-asset-price --ids 42161-0xPT_ADDRESS --chain-id 42161
 **Trigger phrases:** "buy PT on Pendle", "lock in fixed yield Pendle", "purchase PT token", "get fixed APY Pendle"
 
 ```bash
-pendle --chain <CHAIN_ID> [--dry-run] [--confirm] buy-pt \
+pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] buy-pt \
   --token-in <INPUT_TOKEN_ADDRESS> \
   --amount-in <AMOUNT_WEI> \
   --pt-address <PT_TOKEN_ADDRESS> \
@@ -400,10 +400,10 @@ pendle --chain <CHAIN_ID> [--dry-run] [--confirm] buy-pt \
 **Example:**
 ```bash
 # Preview (no flags — safe, calls SDK, returns real quote with expected_pt_out)
-pendle --chain 42161 buy-pt --token-in 0xaf88d065e77c8cc2239327c5edb3a432268e5831 --amount-in 1000000000 --pt-address 0xPT_ADDR
+pendle-plugin --chain 42161 buy-pt --token-in 0xaf88d065e77c8cc2239327c5edb3a432268e5831 --amount-in 1000000000 --pt-address 0xPT_ADDR
 
 # Execute (after user confirmation)
-pendle --chain 42161 --confirm buy-pt --token-in 0xaf88d065e77c8cc2239327c5edb3a432268e5831 --amount-in 1000000000 --pt-address 0xPT_ADDR
+pendle-plugin --chain 42161 --confirm buy-pt --token-in 0xaf88d065e77c8cc2239327c5edb3a432268e5831 --amount-in 1000000000 --pt-address 0xPT_ADDR
 ```
 
 ---
@@ -413,7 +413,7 @@ pendle --chain 42161 --confirm buy-pt --token-in 0xaf88d065e77c8cc2239327c5edb3a
 **Trigger phrases:** "sell PT Pendle", "exit fixed yield position", "convert PT back to", "sell Pendle PT"
 
 ```bash
-pendle --chain <CHAIN_ID> [--dry-run] [--confirm] sell-pt \
+pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] sell-pt \
   --pt-address <PT_ADDRESS> \
   --amount-in <PT_AMOUNT_WEI> \
   --token-out <OUTPUT_TOKEN_ADDRESS> \
@@ -446,7 +446,7 @@ pendle --chain <CHAIN_ID> [--dry-run] [--confirm] sell-pt \
 > ⚠️ **Only use markets with ≥ 3 months to expiry.** Near-expiry markets return "Empty routes array" from the Pendle SDK — this is expected and not a bug.
 
 ```bash
-pendle --chain <CHAIN_ID> [--dry-run] [--confirm] buy-yt \
+pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] buy-yt \
   --token-in <INPUT_TOKEN_ADDRESS> \
   --amount-in <AMOUNT_WEI> \
   --yt-address <YT_TOKEN_ADDRESS> \
@@ -474,7 +474,7 @@ pendle --chain <CHAIN_ID> [--dry-run] [--confirm] buy-yt \
 **Trigger phrases:** "sell YT Pendle", "exit yield position", "convert YT back to"
 
 ```bash
-pendle --chain <CHAIN_ID> [--dry-run] [--confirm] sell-yt \
+pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] sell-yt \
   --yt-address <YT_ADDRESS> \
   --amount-in <YT_AMOUNT_WEI> \
   --token-out <OUTPUT_TOKEN_ADDRESS> \
@@ -505,7 +505,7 @@ pendle --chain <CHAIN_ID> [--dry-run] [--confirm] sell-yt \
 > ⚠️ **Use markets with ≥ 3 months to expiry.** Near-expiry markets reject LP deposits on-chain ("execution reverted") even with valid calldata.
 
 ```bash
-pendle --chain <CHAIN_ID> [--dry-run] [--confirm] add-liquidity \
+pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] add-liquidity \
   --token-in <INPUT_TOKEN_ADDRESS> \
   --amount-in <AMOUNT_WEI> \
   --lp-address <LP_TOKEN_ADDRESS> \
@@ -535,7 +535,7 @@ pendle --chain <CHAIN_ID> [--dry-run] [--confirm] add-liquidity \
 **Trigger phrases:** "remove liquidity from Pendle", "withdraw from Pendle LP", "exit Pendle pool", "redeem LP tokens Pendle"
 
 ```bash
-pendle --chain <CHAIN_ID> [--dry-run] [--confirm] remove-liquidity \
+pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] remove-liquidity \
   --lp-address <LP_TOKEN_ADDRESS> \
   --lp-amount-in <LP_AMOUNT_WEI> \
   --token-out <OUTPUT_TOKEN_ADDRESS> \
@@ -566,7 +566,7 @@ pendle --chain <CHAIN_ID> [--dry-run] [--confirm] remove-liquidity \
 > - Some markets return HTTP 403 from the Pendle SDK for multi-output minting. Try Arbitrum (chainId 42161) which has the highest coverage. If 403 persists, the market does not support SDK minting.
 
 ```bash
-pendle --chain <CHAIN_ID> [--dry-run] [--confirm] mint-py \
+pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] mint-py \
   --token-in <INPUT_TOKEN_ADDRESS> \
   --amount-in <AMOUNT_WEI> \
   --pt-address <PT_ADDRESS> \
@@ -595,7 +595,7 @@ pendle --chain <CHAIN_ID> [--dry-run] [--confirm] mint-py \
 **Note:** PT amount must equal YT amount. Use this after market expiry for 1:1 redemption without slippage.
 
 ```bash
-pendle --chain <CHAIN_ID> [--dry-run] [--confirm] redeem-py \
+pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] redeem-py \
   --pt-address <PT_ADDRESS> \
   --pt-amount <PT_AMOUNT_WEI> \
   --yt-address <YT_ADDRESS> \
@@ -643,7 +643,7 @@ Pendle markets run on Arbitrum (42161), Ethereum (1), BSC (56), and Base (8453).
 Immediately run `list-markets` rather than asking the user which market they want — they often don't know the PT addresses yet:
 
 ```bash
-pendle --chain 42161 list-markets --active-only --limit 10
+pendle-plugin --chain 42161 list-markets --active-only --limit 10
 ```
 
 Highlight: market name, `impliedApy` (= locked fixed APY if you buy PT now), `liquidity.usd`, and expiry date. Recommend markets with `liquidity.usd > $500k` for best execution.
@@ -654,10 +654,10 @@ Once the user picks a market, call `get-market-info` to get the PT address, then
 
 ```bash
 # Get token addresses
-pendle --chain 42161 get-market-info --market <MARKET_ADDRESS>
+pendle-plugin --chain 42161 get-market-info --market <MARKET_ADDRESS>
 
 # Preview (no funds move — calls Pendle SDK for real quote)
-pendle --chain 42161 buy-pt \
+pendle-plugin --chain 42161 buy-pt \
   --token-in <USDC_OR_ASSET_ADDRESS> \
   --amount-in <AMOUNT_WEI> \
   --pt-address <PT_ADDRESS>
@@ -691,13 +691,13 @@ Minimum to test: a few dollars of USDC or WETH on Arbitrum.
 
 ```bash
 # Active Arbitrum markets (global --chain auto-applies to list-markets)
-pendle --chain 42161 list-markets --active-only --limit 10
+pendle-plugin --chain 42161 list-markets --active-only --limit 10
 
 # Search by asset — ETH-derivative pools (weETH, wstETH, rETH, etc.)
-pendle --chain 42161 list-markets --search weETH --active-only
+pendle-plugin --chain 42161 list-markets --search weETH --active-only
 
 # Search for stablecoin markets
-pendle --chain 42161 list-markets --search USDC --active-only
+pendle-plugin --chain 42161 list-markets --search USDC --active-only
 ```
 
 Note the `pt` address and `address` (= LP address) for your chosen market. Look for high `impliedApy` and `liquidity.usd > 1M`.
@@ -706,13 +706,13 @@ Note the `pt` address and `address` (= LP address) for your chosen market. Look 
 
 ```bash
 # Preview (no --confirm — calls Pendle SDK, returns real quote, no on-chain action):
-pendle --chain 42161 buy-pt \
+pendle-plugin --chain 42161 buy-pt \
   --token-in 0xaf88d065e77c8cc2239327c5edb3a432268e5831 \
   --amount-in 5000000 \
   --pt-address <PT_ADDRESS>
 
 # Execute after reviewing expected_pt_out in the preview:
-pendle --chain 42161 --confirm buy-pt \
+pendle-plugin --chain 42161 --confirm buy-pt \
   --token-in 0xaf88d065e77c8cc2239327c5edb3a432268e5831 \
   --amount-in 5000000 \
   --pt-address <PT_ADDRESS>
@@ -721,7 +721,7 @@ pendle --chain 42161 --confirm buy-pt \
 ### Step 4 — Check your positions
 
 ```bash
-pendle --chain 42161 get-positions
+pendle-plugin --chain 42161 get-positions
 ```
 
 Allow 15–30 seconds for the Pendle indexer to reflect the new position.
@@ -730,13 +730,13 @@ Allow 15–30 seconds for the Pendle indexer to reflect the new position.
 
 ```bash
 # Preview (note price_impact_pct — warning fires if > 5%)
-pendle --chain 42161 sell-pt \
+pendle-plugin --chain 42161 sell-pt \
   --pt-address <PT_ADDRESS> \
   --amount-in <YOUR_PT_WEI> \
   --token-out 0xaf88d065e77c8cc2239327c5edb3a432268e5831
 
 # Execute after reviewing expected_token_out and price_impact_pct:
-pendle --chain 42161 --confirm sell-pt \
+pendle-plugin --chain 42161 --confirm sell-pt \
   --pt-address <PT_ADDRESS> \
   --amount-in <YOUR_PT_WEI> \
   --token-out 0xaf88d065e77c8cc2239327c5edb3a432268e5831

@@ -20,7 +20,7 @@ components:
 
 build:
   lang: rust
-  binary_name: pendle
+  binary_name: pendle-plugin
 
 api_calls:
   - "https://api-v2.pendle.finance/core"
