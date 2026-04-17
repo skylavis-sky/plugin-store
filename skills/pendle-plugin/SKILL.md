@@ -561,6 +561,16 @@ pendle-plugin --chain <CHAIN_ID> [--dry-run] [--confirm] remove-liquidity \
 
 **Trigger phrases:** "mint PT and YT", "tokenize yield Pendle", "split yield Pendle", "create PT YT"
 
+> **Agent pre-flight — always run before mint-py:**
+> 1. Confirm the market exists and get its PT/YT addresses:
+>    ```bash
+>    pendle-plugin --chain <CHAIN_ID> get-market-info --market <MARKET_ADDRESS>
+>    ```
+>    If this returns an error, the market address is invalid — do not proceed. Use `list-markets --active-only` to find a valid market.
+> 2. Use the PT and YT addresses returned by `get-market-info`, not addresses sourced from elsewhere.
+>
+> The error "Unable to classify convert action" almost always means the market address is wrong or does not exist on the specified chain.
+
 > ℹ️ **Supported `--token-in` inputs:**
 > - **Any ERC-20 token** is accepted — USDC, USDT, WETH, ARB, WBTC, DAI, and others are routed through a DEX aggregator to the market's underlying asset before minting.
 > - **The market's underlying token** (e.g. weETH for a weETH market) mints directly without an aggregator swap.
@@ -789,6 +799,8 @@ pendle-plugin --chain 42161 --confirm sell-pt \
 | `ERC20: transfer amount exceeds allowance` | Approval tx was broadcast but main tx fired before it confirmed on-chain | Re-run the command — the approval is already on-chain. Fixed in current version (wait added automatically after each approval) |
 | "requiredApprovals" approve fails | Insufficient token balance for the approval amount | Check balance with `onchainos wallet balance --chain <id>` |
 | Market shows no liquidity | Market near expiry or low TVL | Use `list-markets --active-only` to find liquid markets |
+| "Unable to classify convert action" | **Most common cause: invalid or non-existent market address.** Secondary cause: wrong PT/YT addresses for the market. | Run `pendle-plugin --chain <id> get-market-info --market <MARKET_ADDRESS>` first — if it returns an error, the market address is wrong. Get valid addresses from `list-markets --active-only`. |
+| "Unable to classify convert action" (after verifying market is valid) | Plugin binary pre-v0.2.4 using deprecated v3 POST endpoint | Check version: `pendle-plugin --version`. If below 0.2.4, reinstall from SKILL.md pre-flight block. |
 | HTTP 403 from `mint-py` or `redeem-py` | Pendle SDK may not support multi-token operations for this market | Try `mint-py` on Arbitrum (chainId 42161); if 403 persists, this market does not support SDK minting |
 | "Pendle SDK convert returned HTTP 403" | API rate limit, geographic restriction, or unsupported market | Wait and retry; verify market addresses are correct for the target chain |
 | `get-asset-price` returns empty priceMap | IDs not chain-prefixed | Use format `42161-0x...` not bare `0x...` |
