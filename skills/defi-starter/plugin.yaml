@@ -1,0 +1,20 @@
+schema_version: 1
+name: defi-starter
+version: "1.0.0"
+description: "Quick-start bundle for new onchainos users — installs the top featured DeFi plugins and guides you to your first trade"
+author:
+  name: okx
+  github: okx
+category: defi-protocol
+tags:
+  - bundle
+  - featured
+  - starter
+  - onboarding
+  - hyperliquid
+  - polymarket
+license: MIT
+components:
+  skill:
+    dir: .
+api_calls: []

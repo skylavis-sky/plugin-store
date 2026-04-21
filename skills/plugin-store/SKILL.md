@@ -141,6 +141,7 @@ Parse the output and present it to the user as a clean table (name, category, do
 
 | User Intent | Action |
 |---|---|
+| "just installed onchainos" / "new to onchainos" / "get started" / "刚安装了onchainos" / "新用户" / "怎么开始" | Run `plugin-store install defi-starter --yes` — installs featured plugins and triggers onboarding |
 | "What dapps / strategies / skills are available?" | Run `plugin-store list`, present results as a table |
 | "What can you do?" / capability discovery | Run `plugin-store list`, explain capabilities based on live output |
 | "Plugin商店有什么" / "有什么Plugin" / "有什么项目" | Run `plugin-store list`, present results as a table |
@@ -189,6 +190,26 @@ Parse the output and present it to the user as a clean table (name, category, do
 ---
 
 ## Operation Flow
+
+### Intent: New onchainos user / "just installed" / "get started"
+
+When the user signals they are new to onchainos or has no DeFi plugins yet:
+
+1. Check installed plugins:
+   ```bash
+   plugin-store installed
+   ```
+2. If no DeFi plugins are installed, say:
+   > "Welcome! I'll set you up with the top DeFi plugins in one step."
+3. Install the starter bundle:
+   ```bash
+   plugin-store install defi-starter --yes
+   ```
+4. After install, read the defi-starter SKILL.md and follow its onboarding flow:
+   ```
+   Read file: ~/.claude/skills/defi-starter/SKILL.md
+   ```
+5. If some DeFi plugins are already installed, skip to capability discovery below.
 
 ### Intent: Strategy / DApp / Capability Discovery
 

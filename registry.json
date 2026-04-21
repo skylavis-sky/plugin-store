@@ -3,6 +3,31 @@
   "stats_url": "https://plugin-store-dun.vercel.app",
   "plugins": [
     {
+      "name": "defi-starter",
+      "version": "1.0.0",
+      "description": "Quick-start bundle for new onchainos users — installs the top featured DeFi plugins (Hyperliquid perps + Polymarket prediction markets) and guides you to your first trade",
+      "author": {
+        "name": "okx",
+        "github": "okx"
+      },
+      "license": "MIT",
+      "category": "defi-protocol",
+      "tags": [
+        "bundle",
+        "featured",
+        "starter",
+        "onboarding"
+      ],
+      "type": "official",
+      "components": {
+        "skill": {
+          "dir": "."
+        }
+      },
+      "api_calls": [],
+      "link": "https://github.com/okx/plugin-store"
+    },
+    {
       "name": "aave-v3-plugin",
       "version": "0.2.7",
       "description": "Lend and borrow crypto assets on Aave V3 — the leading decentralized liquidity protocol. Trigger phrases: supply to aave, deposit to aave, borrow from aave, repay aave loan, aave health factor, my aave positions, aave interest rates, enable emode, disable collateral, claim aave rewards.",
@@ -250,6 +275,7 @@
       "license": "MIT",
       "category": "defi-protocol",
       "tags": [
+        "featured",
         "perpetuals",
         "trading",
         "hyperliquid",
@@ -853,6 +879,7 @@
       "license": "MIT",
       "category": "defi-protocol",
       "tags": [
+        "featured",
         "prediction-market",
         "polymarket",
         "polygon",
