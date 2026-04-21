@@ -448,6 +448,56 @@ pub async fn withdraw_usdc_from_proxy(eoa_addr: &str, amount: u128) -> Result<St
     extract_tx_hash(&result)
 }
 
+/// Withdraw pUSD from the proxy wallet back to the EOA.
+///
+/// Same ABI encoding as `withdraw_usdc_from_proxy` but targets the pUSD contract.
+/// Used after the V2 collateral cutover (~2026-04-28).
+pub async fn withdraw_pusd_from_proxy(eoa_addr: &str, amount: u128) -> Result<String> {
+    use sha3::{Digest, Keccak256};
+    use crate::config::Contracts;
+
+    let transfer_data = format!(
+        "a9059cbb{}{}",
+        pad_address(eoa_addr),
+        pad_u256(amount)
+    );
+    let transfer_bytes = hex::decode(&transfer_data).expect("transfer calldata hex");
+    let transfer_len = transfer_bytes.len();
+
+    let selector = Keccak256::digest(b"proxy((uint8,address,uint256,bytes)[])");
+    let selector_hex = hex::encode(&selector[..4]);
+    let pusd_padded = pad_address(Contracts::PUSD);
+    let data_len_padded = format!("{:064x}", transfer_len);
+    let pad_len = (32 - transfer_len % 32) % 32;
+    let data_padded = format!("{}{}", transfer_data, "00".repeat(pad_len));
+
+    let calldata = format!(
+        "0x{}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}",
+        selector_hex,
+        "0000000000000000000000000000000000000000000000000000000000000020",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        "0000000000000000000000000000000000000000000000000000000000000020",
+        "0000000000000000000000000000000000000000000000000000000000000001", // op = 1 (CALL)
+        pusd_padded,
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000080",
+        data_len_padded,
+        data_padded,
+    );
+
+    let result = wallet_contract_call(Contracts::PROXY_FACTORY, &calldata).await?;
+    extract_tx_hash(&result)
+}
+
 /// Get USDC.e ERC-20 allowance for owner → spender. Returns raw amount (6 decimals).
 pub async fn get_usdc_allowance(owner: &str, spender: &str) -> Result<u128> {
     use crate::config::{Contracts, Urls};
@@ -658,7 +708,11 @@ pub async fn approve_ctf(neg_risk: bool) -> Result<String> {
 /// YES (bit 0) and NO (bit 1) outcomes — the CTF contract only pays out for winning tokens
 /// and silently no-ops for losing ones, so passing both is safe.
 /// For neg_risk (multi-outcome) markets use the NEG_RISK_ADAPTER path (not implemented here).
-pub async fn ctf_redeem_positions(condition_id: &str) -> Result<String> {
+///
+/// `collateral_addr`: the collateral token used at trade time.
+///   - V1 markets: Contracts::USDC_E
+///   - V2 markets: Contracts::PUSD  (from ~2026-04-28)
+pub async fn ctf_redeem_positions(condition_id: &str, collateral_addr: &str) -> Result<String> {
     use sha3::{Digest, Keccak256};
     use crate::config::Contracts;
 
@@ -668,7 +722,7 @@ pub async fn ctf_redeem_positions(condition_id: &str) -> Result<String> {
 
     // ABI-encode the four parameters.
     // Slots 0-2 are static (address and bytes32); slot 3 is the offset to the dynamic uint256[] array.
-    let collateral  = pad_address(Contracts::USDC_E);         // address padded to 32 bytes
+    let collateral  = pad_address(collateral_addr);            // address padded to 32 bytes
     let parent_id   = format!("{:064x}", 0u128);               // bytes32(0) — null parent collection
     let cond_id_hex = condition_id.trim_start_matches("0x");
     let cond_id_pad = format!("{:0>64}", cond_id_hex);         // conditionId as bytes32
@@ -695,14 +749,18 @@ pub async fn ctf_redeem_positions(condition_id: &str) -> Result<String> {
 /// Routes: EOA → PROXY_FACTORY.proxy([(CALL, CTF, 0, redeemPositions_calldata)])
 /// The factory forwards the call from the proxy wallet's context, so CTF sees
 /// msg.sender = proxy wallet, which holds the winning tokens.
-pub async fn ctf_redeem_via_proxy(condition_id: &str) -> Result<String> {
+///
+/// `collateral_addr`: the collateral token used at trade time.
+///   - V1 markets: Contracts::USDC_E
+///   - V2 markets: Contracts::PUSD  (from ~2026-04-28)
+pub async fn ctf_redeem_via_proxy(condition_id: &str, collateral_addr: &str) -> Result<String> {
     use sha3::{Digest, Keccak256};
     use crate::config::Contracts;
 
     // Build inner redeemPositions calldata (identical to ctf_redeem_positions)
     let inner_selector = Keccak256::digest(b"redeemPositions(address,bytes32,bytes32,uint256[])");
     let inner_selector_hex = hex::encode(&inner_selector[..4]);
-    let collateral   = pad_address(Contracts::USDC_E);
+    let collateral   = pad_address(collateral_addr);
     let parent_id    = format!("{:064x}", 0u128);
     let cond_id_hex  = condition_id.trim_start_matches("0x");
     let cond_id_pad  = format!("{:0>64}", cond_id_hex);
@@ -782,15 +840,16 @@ pub async fn get_pol_balance(addr: &str) -> Result<f64> {
     Ok(wei as f64 / 1e18)
 }
 
-/// Get USDC.e (ERC-20) balance for an address. Returns human-readable f64 (dollars).
-pub async fn get_usdc_balance(addr: &str) -> Result<f64> {
-    use crate::config::{Contracts, Urls};
+/// Get the ERC-20 balance for `holder_addr` on any 6-decimal token contract.
+/// Returns human-readable f64 (e.g. dollars for USDC.e / pUSD).
+pub async fn get_erc20_balance_6dec(token_addr: &str, holder_addr: &str) -> Result<f64> {
+    use crate::config::Urls;
     // balanceOf(address) selector = 0x70a08231
-    let data = format!("0x70a08231{}", pad_address(addr));
+    let data = format!("0x70a08231{}", pad_address(holder_addr));
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "eth_call",
-        "params": [{ "to": Contracts::USDC_E, "data": data }, "latest"],
+        "params": [{ "to": token_addr, "data": data }, "latest"],
         "id": 1
     });
     let v: serde_json::Value = reqwest::Client::new()
@@ -807,7 +866,117 @@ pub async fn get_usdc_balance(addr: &str) -> Result<f64> {
     }
     let hex = v["result"].as_str().unwrap_or("0x").trim_start_matches("0x");
     let raw = u128::from_str_radix(hex, 16).unwrap_or(0);
-    Ok(raw as f64 / 1_000_000.0) // USDC.e has 6 decimals
+    Ok(raw as f64 / 1_000_000.0) // 6 decimals
+}
+
+/// Get USDC.e (ERC-20) balance for an address. Returns human-readable f64 (dollars).
+pub async fn get_usdc_balance(addr: &str) -> Result<f64> {
+    use crate::config::Contracts;
+    get_erc20_balance_6dec(Contracts::USDC_E, addr).await
+}
+
+/// Get pUSD (ERC-20) balance for an address. Returns human-readable f64 (dollars).
+/// pUSD is the Polymarket USD collateral token that replaces USDC.e for V2 exchange contracts.
+pub async fn get_pusd_balance(addr: &str) -> Result<f64> {
+    use crate::config::Contracts;
+    get_erc20_balance_6dec(Contracts::PUSD, addr).await
+}
+
+/// Wrap USDC.e → pUSD via the Collateral Onramp for an EOA wallet.
+///
+/// Steps:
+///   1. Approve USDC.e to COLLATERAL_ONRAMP (amount).
+///   2. Call COLLATERAL_ONRAMP.wrap(USDC_E, recipient, amount).
+///   3. Wait for the wrap tx to confirm.
+///
+/// Returns the wrap tx hash after on-chain confirmation.
+pub async fn wrap_usdc_to_pusd(recipient: &str, amount: u128) -> Result<String> {
+    use sha3::{Digest, Keccak256};
+    use crate::config::Contracts;
+
+    // Step 1: approve USDC.e to the onramp
+    let approve_tx = usdc_approve(Contracts::USDC_E, Contracts::COLLATERAL_ONRAMP, amount).await?;
+    wait_for_tx_receipt(&approve_tx, 30).await?;
+
+    // Step 2: call wrap(address _asset, address _to, uint256 _amount)
+    let selector = Keccak256::digest(b"wrap(address,address,uint256)");
+    let selector_hex = hex::encode(&selector[..4]);
+    let calldata = format!(
+        "0x{}{}{}{}",
+        selector_hex,
+        pad_address(Contracts::USDC_E),
+        pad_address(recipient),
+        pad_u256(amount),
+    );
+    let result = wallet_contract_call(Contracts::COLLATERAL_ONRAMP, &calldata).await?;
+    extract_tx_hash(&result)
+}
+
+/// Wrap USDC.e → pUSD for a proxy wallet via PROXY_FACTORY.proxy().
+///
+/// The proxy wallet first approves USDC.e to the Collateral Onramp, then calls
+/// COLLATERAL_ONRAMP.wrap(USDC_E, proxy_addr, amount) from its own context.
+///
+/// Steps (each routed through proxy):
+///   1. proxy_usdc_approve(COLLATERAL_ONRAMP)  — sets unlimited allowance
+///   2. proxy calls wrap(USDC_E, proxy_addr, amount) → pUSD minted to proxy
+///
+/// Returns the wrap tx hash after on-chain confirmation.
+pub async fn proxy_wrap_usdc_to_pusd(proxy_addr: &str, amount: u128) -> Result<String> {
+    use sha3::{Digest, Keccak256};
+    use crate::config::Contracts;
+
+    // Step 1: proxy approves USDC.e to the onramp (unlimited)
+    let approve_tx = proxy_usdc_approve(Contracts::COLLATERAL_ONRAMP).await?;
+    wait_for_tx_receipt(&approve_tx, 30).await?;
+
+    // Step 2: proxy calls wrap(USDC_E, proxy_addr, amount)
+    // wrap(address,address,uint256) = selector + _asset + _to + _amount
+    let wrap_selector = Keccak256::digest(b"wrap(address,address,uint256)");
+    let wrap_selector_hex = hex::encode(&wrap_selector[..4]);
+    let inner_hex = format!(
+        "{}{}{}{}",
+        wrap_selector_hex,
+        pad_address(Contracts::USDC_E),
+        pad_address(proxy_addr),
+        pad_u256(amount),
+    );
+    let inner_bytes = hex::decode(&inner_hex).expect("wrap calldata hex");
+    let inner_len = inner_bytes.len();
+    let pad_len = (32 - inner_len % 32) % 32;
+    let inner_padded = format!("{}{}", inner_hex, "00".repeat(pad_len));
+
+    // Wrap in PROXY_FACTORY.proxy([(CALL, COLLATERAL_ONRAMP, 0, wrap_calldata)])
+    let outer_selector = Keccak256::digest(b"proxy((uint8,address,uint256,bytes)[])");
+    let outer_selector_hex = hex::encode(&outer_selector[..4]);
+    let onramp_padded = pad_address(Contracts::COLLATERAL_ONRAMP);
+    let data_len_padded = format!("{:064x}", inner_len);
+
+    let calldata = format!(
+        "0x{}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}",
+        outer_selector_hex,
+        "0000000000000000000000000000000000000000000000000000000000000020",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        "0000000000000000000000000000000000000000000000000000000000000020",
+        "0000000000000000000000000000000000000000000000000000000000000001", // op = 1 (CALL)
+        onramp_padded,
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000080",
+        data_len_padded,
+        inner_padded,
+    );
+
+    let result = wallet_contract_call(Contracts::PROXY_FACTORY, &calldata).await?;
+    extract_tx_hash(&result)
 }
 
 /// Poll eth_getTransactionReceipt until the tx is mined (or timeout).

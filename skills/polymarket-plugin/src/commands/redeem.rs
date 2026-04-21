@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
 use reqwest::Client;
 
-use crate::api::{get_clob_market, get_gamma_market_by_slug, get_positions};
-use crate::config::load_credentials;
+use crate::api::{get_clob_market, get_clob_version, get_gamma_market_by_slug, get_positions};
+use crate::config::{Contracts, load_credentials};
 use crate::onchainos::{
     ctf_redeem_positions, ctf_redeem_via_proxy, get_wallet_address, wait_for_tx_receipt,
 };
@@ -32,6 +32,8 @@ async fn resolve_market(client: &Client, market_id: &str) -> Result<(String, boo
 /// Checks which wallet(s) hold redeemable tokens via the Data API, submits the
 /// appropriate tx(es), and waits for each to confirm on-chain before returning.
 ///
+/// `collateral_addr`: USDC.e for V1 positions, pUSD for V2 positions.
+///
 /// Returns a JSON Value summarising the result (for use in both single and batch flows).
 async fn redeem_one(
     client: &Client,
@@ -39,6 +41,7 @@ async fn redeem_one(
     question: &str,
     eoa_addr: &str,
     proxy_addr: Option<&str>,
+    collateral_addr: &str,
 ) -> Result<serde_json::Value> {
     let cid_hex = condition_id.trim_start_matches("0x");
     let cid_display = format!("0x{}", cid_hex);
@@ -97,7 +100,7 @@ async fn redeem_one(
              (may lag after resolution). Attempting EOA redeem as fallback.",
             cid_display
         );
-        let tx_hash = ctf_redeem_positions(condition_id).await?;
+        let tx_hash = ctf_redeem_positions(condition_id, collateral_addr).await?;
         eprintln!("[polymarket] Waiting for EOA redeem tx to confirm...");
         wait_for_tx_receipt(&tx_hash, 120).await?;
         out["eoa_tx"] = serde_json::Value::String(tx_hash);
@@ -110,7 +113,7 @@ async fn redeem_one(
 
     if eoa_redeemable {
         eprintln!("[polymarket] EOA has winning tokens — submitting EOA redeemPositions...");
-        let tx = ctf_redeem_positions(condition_id).await?;
+        let tx = ctf_redeem_positions(condition_id, collateral_addr).await?;
         eprintln!("[polymarket] Waiting for EOA redeem tx to confirm...");
         wait_for_tx_receipt(&tx, 120).await?;
         out["eoa_tx"] = serde_json::Value::String(tx);
@@ -122,7 +125,7 @@ async fn redeem_one(
         eprintln!(
             "[polymarket] Proxy has winning tokens — submitting proxy redeemPositions via PROXY_FACTORY..."
         );
-        let tx = ctf_redeem_via_proxy(condition_id).await?;
+        let tx = ctf_redeem_via_proxy(condition_id, collateral_addr).await?;
         eprintln!("[polymarket] Waiting for proxy redeem tx to confirm...");
         wait_for_tx_receipt(&tx, 120).await?;
         out["proxy_tx"] = serde_json::Value::String(tx);
@@ -131,8 +134,9 @@ async fn redeem_one(
         );
     }
 
+    let collateral_sym = if collateral_addr.eq_ignore_ascii_case(Contracts::PUSD) { "pUSD" } else { "USDC.e" };
     out["note"] = serde_json::Value::String(
-        "USDC.e transferred to the respective wallet(s).".into(),
+        format!("{} transferred to the respective wallet(s).", collateral_sym),
     );
     Ok(out)
 }
@@ -150,11 +154,18 @@ pub async fn run(market_id: &str, dry_run: bool) -> Result<()> {
     }
 
     let cid_display = format!("0x{}", condition_id.trim_start_matches("0x"));
-    let eoa_addr = get_wallet_address().await?;
+    let (eoa_addr, clob_version_raw) = tokio::join!(
+        get_wallet_address(),
+        get_clob_version(&client),
+    );
+    let eoa_addr = eoa_addr?;
+    // Use pUSD as collateral for V2 markets (cutover ~2026-04-28).
+    let collateral_addr = if clob_version_raw == 2 { Contracts::PUSD } else { Contracts::USDC_E };
     let creds = load_credentials().unwrap_or_default();
     let proxy_addr = creds.and_then(|c| c.proxy_wallet);
 
     if dry_run {
+        let collateral_sym = if clob_version_raw == 2 { "pUSD" } else { "USDC.e" };
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
@@ -168,6 +179,7 @@ pub async fn run(market_id: &str, dry_run: bool) -> Result<()> {
                     "eoa_wallet": eoa_addr,
                     "proxy_wallet": proxy_addr,
                     "action": "redeemPositions",
+                    "collateral": collateral_sym,
                     "index_sets": [1, 2],
                     "note": "dry-run: will redeem from whichever wallet (EOA / proxy) holds the winning tokens."
                 }
@@ -176,7 +188,7 @@ pub async fn run(market_id: &str, dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    let result = redeem_one(&client, &condition_id, &question, &eoa_addr, proxy_addr.as_deref()).await?;
+    let result = redeem_one(&client, &condition_id, &question, &eoa_addr, proxy_addr.as_deref(), collateral_addr).await?;
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({ "ok": true, "data": result }))?
@@ -190,7 +202,13 @@ pub async fn run(market_id: &str, dry_run: bool) -> Result<()> {
 /// redeems each sequentially, waiting for on-chain confirmation between markets.
 pub async fn run_all(dry_run: bool) -> Result<()> {
     let client = Client::new();
-    let eoa_addr = get_wallet_address().await?;
+    let (eoa_addr, clob_version_raw) = tokio::join!(
+        get_wallet_address(),
+        get_clob_version(&client),
+    );
+    let eoa_addr = eoa_addr?;
+    // Use pUSD as collateral for V2 markets (cutover ~2026-04-28).
+    let collateral_addr = if clob_version_raw == 2 { Contracts::PUSD } else { Contracts::USDC_E };
     let creds = load_credentials().unwrap_or_default();
     let proxy_addr = creds.and_then(|c| c.proxy_wallet);
 
@@ -272,7 +290,7 @@ pub async fn run_all(dry_run: bool) -> Result<()> {
             redeemable.len(),
             title
         );
-        match redeem_one(&client, cid, title, &eoa_addr, proxy_addr.as_deref()).await {
+        match redeem_one(&client, cid, title, &eoa_addr, proxy_addr.as_deref(), collateral_addr).await {
             Ok(r) => results.push(r),
             Err(e) => {
                 eprintln!("[polymarket] Error redeeming {}: {}", cid, e);
@@ -290,7 +308,7 @@ pub async fn run_all(dry_run: bool) -> Result<()> {
                 "error_count": errors.len(),
                 "results": results,
                 "errors": errors,
-                "note": "USDC.e transferred to respective wallet(s) for all confirmed redemptions."
+                "note": "Collateral (pUSD/USDC.e) transferred to respective wallet(s) for all confirmed redemptions."
             }
         }))?
     );

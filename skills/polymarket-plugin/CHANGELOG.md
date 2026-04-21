@@ -1,5 +1,25 @@
 # Polymarket Plugin Changelog
 
+### v0.5.0 (2026-04-21) — pUSD collateral migration + CLOB v2 completion
+
+- **feat (breaking-compatible)**: Full CLOB v2 support. Plugin auto-detects the active CLOB version via `GET /version` and branches on `OrderVersion::V1` vs `V2`. All new orders use v2 EIP-712 signing: domain version `"2"`, new exchange contracts (`CTF_EXCHANGE_V2 = 0xE111...`, `NEG_RISK_CTF_EXCHANGE_V2 = 0xe222...`), updated order struct (removed `taker`/`nonce`/`feeRateBps`; added `timestamp_ms`/`metadata`/`builder`). V1 orders placed before the upgrade remain placeable if the CLOB reports version 1 — no forced migration for existing users.
+- **feat**: `orders` command — list open orders for the authenticated user (`--state OPEN|MATCHED|DELAYED|UNMATCHED`). `--v1` flag queries both live order book and `/data/pre-migration-orders` endpoint, deduplicates by order_id, and surfaces a migration notice when V1 orders are detected. Each order shows `version` (`V1` or `V2`) based on field-presence detection.
+- **feat**: `watch` command — poll a market's live trade feed every N seconds (`--interval`, default 5; minimum 2). Tracks high-water timestamp to avoid reprinting; prints new events as JSON lines in chronological order.
+- **feat**: `rfq` command — Request-for-Quote block trade flow. Step 1: `POST /rfq/request` → quote ID. Step 2: `GET /rfq/quote/{id}` → display price/amount/expiry. Step 3 (with `--confirm`): sign a V2 EIP-712 order at the quoted price and submit `POST /rfq/confirm`.
+- **feat**: `create-readonly-key` command — derive a read-only Polymarket CLOB API key via L1 ClobAuth (`POST /auth/readonly-api-key`). Prints key to stdout; not saved to creds.json. Write operations will be rejected by the CLOB server.
+- **feat**: `--order-type FAK` (fill-and-kill) support in `buy` and `sell` — fills as much as possible at or better than the given price, cancels the remainder. Complement to FOK (full-fill or nothing).
+- **fix**: Approval in `buy` and `sell` now routes to the correct exchange contract based on CLOB version: V2 orders approved against `CTF_EXCHANGE_V2` / `NEG_RISK_CTF_EXCHANGE_V2`; V1 orders against the legacy v1 addresses. Prevents "not enough allowance" rejections after the v2 upgrade.
+- **fix**: `orders` command uses CLOB v2 endpoint `GET /data/orders` (v1's `GET /orders?state=X` returns HTTP 405 in v2). HMAC signature now computed over the base path without query string (v2 requirement). Response parsing updated for paginated format `{"data": [...], "next_cursor": "...", "count": N}`.
+- **docs**: SKILL.md updated with `orders`, `watch`, `rfq`, `create-readonly-key` command documentation; FAK order type added to Order Type Selection Guide; Key Contracts section split into v2 (active) and v1 (legacy) tables; CLOB v2 migration note added to Overview.
+- **feat**: **pUSD collateral migration** (due ~2026-04-28). Polymarket is replacing USDC.e with pUSD (`0xC011...`) as collateral for V2 exchange contracts. Changes:
+  - `buy`: For V2 orders, checks pUSD balance instead of USDC.e. If pUSD is insufficient but USDC.e is sufficient, **auto-wraps** USDC.e → pUSD via the Collateral Onramp (`wrap(USDC_E, recipient, amount)`) before placing the order — no manual intervention required.
+  - `buy`: For V2 orders, approves pUSD (not USDC.e) to the V2 exchange contract.
+  - `balance`: Shows pUSD balance alongside USDC.e for both EOA and proxy wallets.
+  - `redeem`: Passes pUSD (not USDC.e) as `collateralToken` in `redeemPositions` for V2 markets.
+  - `withdraw`: Auto-detects whether proxy holds pUSD or USDC.e; withdraws whichever covers the requested amount.
+  - `onchainos`: New helpers — `get_pusd_balance`, `wrap_usdc_to_pusd`, `proxy_wrap_usdc_to_pusd`, `withdraw_pusd_from_proxy`.
+  - `config`: Added `Contracts::PUSD` and `Contracts::COLLATERAL_ONRAMP` constants.
+
 ### v0.4.6 (2026-04-15)
 
 - **chore**: Version bump.
