@@ -267,6 +267,14 @@ pub async fn run(
 
     // ── Dry-run exit — full projected order fields ────────────────────────────
     if dry_run {
+        use crate::config::Contracts;
+        // Fetch CLOB version to show which exchange contract + collateral would be used.
+        let dry_clob_version_raw = get_clob_version(&client).await;
+        let dry_clob_version = if dry_clob_version_raw == 2 { OrderVersion::V2 } else { OrderVersion::V1 };
+        let dry_exchange_addr = Contracts::exchange(dry_clob_version, neg_risk);
+        let dry_collateral = if dry_clob_version == OrderVersion::V2 { Contracts::PUSD } else { Contracts::USDC_E };
+        let dry_version_label = if dry_clob_version == OrderVersion::V2 { "V2" } else { "V1" };
+
         println!(
             "{}",
             serde_json::json!({
@@ -286,6 +294,10 @@ pub async fn run(
                     "fee_rate_bps": fee_rate_bps,
                     "post_only": post_only,
                     "expires": if expiration > 0 { serde_json::Value::Number(expiration.into()) } else { serde_json::Value::Null },
+                    "clob_version": dry_version_label,
+                    "exchange_address": dry_exchange_addr,
+                    "collateral_token": dry_collateral,
+                    "neg_risk": neg_risk,
                     "note": "dry-run: order not submitted"
                 }
             })

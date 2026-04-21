@@ -12,7 +12,7 @@ use crate::onchainos::get_wallet_address;
 /// `only_v1`: when true, show only V1-signed orders placed before the CLOB v2 upgrade.
 ///            Also queries `/data/pre-migration-orders` and merges results so no V1
 ///            order is missed during the migration window.
-pub async fn run(state: &str, only_v1: bool) -> Result<()> {
+pub async fn run(state: &str, only_v1: bool, limit: Option<usize>) -> Result<()> {
     let client = Client::new();
     let signer_addr = get_wallet_address().await?;
     let creds = ensure_credentials(&client, &signer_addr).await?;
@@ -41,6 +41,7 @@ pub async fn run(state: &str, only_v1: bool) -> Result<()> {
     let filtered: Vec<serde_json::Value> = orders
         .iter()
         .filter(|o| !only_v1 || o.is_v1())
+        .take(limit.unwrap_or(usize::MAX))
         .map(|o| {
             let version_str = match o.version() {
                 OrderVersion::V1 => "v1",

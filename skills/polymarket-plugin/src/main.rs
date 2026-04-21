@@ -245,7 +245,7 @@ enum Commands {
     /// Redeem winning outcome tokens after a market resolves (signs via onchainos wallet)
     Redeem {
         /// Market identifier: condition_id (0x-prefixed hex) or slug. Omit when using --all.
-        #[arg(long)]
+        #[arg(long, alias = "condition-id")]
         market_id: Option<String>,
 
         /// Redeem all redeemable positions across EOA and proxy wallets in one pass
@@ -282,6 +282,10 @@ enum Commands {
         /// Show only V1-signed orders placed before the CLOB v2 upgrade (2026-04-21)
         #[arg(long)]
         v1: bool,
+
+        /// Maximum number of orders to return (default: all)
+        #[arg(long)]
+        limit: Option<usize>,
     },
 
     /// Watch live trade activity for a market, polling every few seconds (Ctrl+C to stop).
@@ -433,8 +437,8 @@ async fn main() {
                 ))
             }
         }
-        Commands::Orders { state, v1 } => {
-            commands::orders::run(&state, v1).await
+        Commands::Orders { state, v1, limit } => {
+            commands::orders::run(&state, v1, limit).await
         }
         Commands::Watch { market_id, interval, limit } => {
             commands::watch::run(&market_id, interval, limit).await
