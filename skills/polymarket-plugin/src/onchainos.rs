@@ -579,6 +579,58 @@ pub async fn proxy_ctf_set_approval_for_all(operator: &str) -> Result<String> {
     extract_tx_hash(&result)
 }
 
+/// Approve pUSD from the proxy wallet to a spender, via PROXY_FACTORY.proxy().
+///
+/// Encodes `PROXY_FACTORY.proxy([(1, PUSD, 0, approve(spender, maxUint))])`.
+/// Used in POLY_PROXY mode to grant V2 exchange contracts (CTF_EXCHANGE_V2 /
+/// NEG_RISK_CTF_EXCHANGE_V2 / NEG_RISK_ADAPTER) spending rights on the proxy wallet's pUSD.
+/// Returns the tx hash.
+pub async fn proxy_pusd_approve(spender: &str) -> Result<String> {
+    use sha3::{Digest, Keccak256};
+    use crate::config::Contracts;
+
+    let approve_data = format!(
+        "095ea7b3{}{}",
+        pad_address(spender),
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    );
+    let approve_bytes = hex::decode(&approve_data).expect("approve calldata hex");
+    let approve_len = approve_bytes.len();
+
+    let selector = Keccak256::digest(b"proxy((uint8,address,uint256,bytes)[])");
+    let selector_hex = hex::encode(&selector[..4]);
+    let pusd_padded = pad_address(Contracts::PUSD);
+    let data_len_padded = format!("{:064x}", approve_len);
+    let pad_len = (32 - approve_len % 32) % 32;
+    let data_padded = format!("{}{}", approve_data, "00".repeat(pad_len));
+
+    let calldata = format!(
+        "0x{}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}\
+         {}",
+        selector_hex,
+        "0000000000000000000000000000000000000000000000000000000000000020",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        "0000000000000000000000000000000000000000000000000000000000000020",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        pusd_padded,
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000080",
+        data_len_padded,
+        data_padded,
+    );
+
+    let result = wallet_contract_call(Contracts::PROXY_FACTORY, &calldata).await?;
+    extract_tx_hash(&result)
+}
+
 /// Approve USDC.e from the proxy wallet to a spender, via PROXY_FACTORY.proxy().
 ///
 /// Encodes `PROXY_FACTORY.proxy([(1, USDC_E, 0, approve(spender, maxUint))])`.

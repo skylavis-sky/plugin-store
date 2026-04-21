@@ -9,7 +9,7 @@ use crate::api::{
 use crate::auth::ensure_credentials;
 use crate::config::OrderVersion;
 use crate::onchainos::{get_pusd_balance, get_usdc_balance, get_wallet_address,
-    proxy_wrap_usdc_to_pusd, wait_for_tx_receipt, wrap_usdc_to_pusd};
+    proxy_pusd_approve, proxy_wrap_usdc_to_pusd, wait_for_tx_receipt, wrap_usdc_to_pusd};
 use crate::series;
 use crate::signing::{sign_order_v2_via_onchainos, sign_order_via_onchainos, OrderParams,
     OrderParamsV2, BYTES32_ZERO};
@@ -497,9 +497,34 @@ pub async fn run(
             crate::onchainos::wait_for_tx_receipt(&tx_hash, 30).await?;
             eprintln!("[polymarket] Approval confirmed.");
         }
+    } else if effective_mode == TradingMode::PolyProxy && clob_version == OrderVersion::V2 {
+        // POLY_PROXY + V2: pUSD approval to V2 exchange contracts may not have been set at
+        // setup-proxy time (setup-proxy predates V2). Check the CLOB's allowance view and
+        // submit a proxy pUSD approve if the allowance is insufficient.
+        // This is idempotent — unlimited approval (maxUint) means it only fires once.
+        let exchange_addr = Contracts::exchange(clob_version, neg_risk);
+        let allowance_raw = if neg_risk {
+            let a_exchange = allowance_info.allowance_for(exchange_addr);
+            let a_adapter  = allowance_info.allowance_for(Contracts::NEG_RISK_ADAPTER);
+            a_exchange.min(a_adapter)
+        } else {
+            allowance_info.allowance_for(exchange_addr)
+        };
+        if allowance_raw < usdc_needed_raw {
+            let version_label = if neg_risk { "Neg Risk CTF Exchange V2" } else { "CTF Exchange V2" };
+            eprintln!("[polymarket] Proxy pUSD allowance insufficient for {}. Approving via proxy...", version_label);
+            let tx = proxy_pusd_approve(exchange_addr).await?;
+            eprintln!("[polymarket] Proxy pUSD approval tx: {}. Waiting for confirmation...", tx);
+            wait_for_tx_receipt(&tx, 30).await?;
+            if neg_risk {
+                eprintln!("[polymarket] Approving pUSD for Neg Risk Adapter via proxy...");
+                let tx2 = proxy_pusd_approve(Contracts::NEG_RISK_ADAPTER).await?;
+                wait_for_tx_receipt(&tx2, 30).await?;
+            }
+            eprintln!("[polymarket] Proxy pUSD approval confirmed.");
+        }
     }
-    // POLY_PROXY mode: approvals are set once during `setup-proxy` and verified on-chain there.
-    // The CLOB server checks allowance independently at order submission — no pre-flight needed.
+    // POLY_PROXY V1: approvals (USDC.e) are set once at setup-proxy time — no per-trade check needed.
 
     let salt = rand_salt();
 
