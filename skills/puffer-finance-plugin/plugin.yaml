@@ -1,0 +1,27 @@
+schema_version: 1
+name: puffer-finance-plugin
+version: "0.1.0"
+description: "Liquid restake ETH via Puffer Finance to earn native staking plus EigenLayer AVS rewards"
+author:
+  name: skylavis-sky
+  github: skylavis-sky
+category: defi-protocol
+tags:
+  - liquid-restaking
+  - puffer
+  - ethereum
+  - eigenlayer
+  - yield
+license: MIT
+
+components:
+  skill:
+    dir: .
+
+build:
+  lang: rust
+  binary_name: puffer-finance
+
+api_calls:
+  - "https://api.puffer.fi"
+  - "https://eth.llamarpc.com"
