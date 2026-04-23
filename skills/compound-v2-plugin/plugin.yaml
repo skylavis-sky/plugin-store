@@ -1,0 +1,28 @@
+schema_version: 1
+name: compound-v2-plugin
+version: "0.1.0"
+description: "Supply assets and borrow against collateral on Compound V2 on Ethereum Mainnet"
+author:
+  name: skylavis-sky
+  github: skylavis-sky
+category: defi-protocol
+tags:
+  - compound
+  - lending
+  - ethereum
+  - defi
+  - legacy
+  - borrow
+license: MIT
+
+components:
+  skill:
+    dir: .
+
+build:
+  lang: rust
+  binary_name: compound-v2
+
+api_calls:
+  - "https://api.compound.finance"
+  - "https://eth.llamarpc.com"
