@@ -167,13 +167,13 @@ PM_INSTALLED=false
 [ -f "${HOME}/.claude/skills/polymarket-plugin/SKILL.md" ] && PM_INSTALLED=true
 ```
 
-**Case A — Both already installed** (`HL_INSTALLED=true` AND `PM_INSTALLED=true`):
+**Case A — Either plugin already installed** (`HL_INSTALLED=true` OR `PM_INSTALLED=true`):
 - Do NOT re-run the install commands.
 - Do NOT show the onboarding table.
 - If the user mentioned a specific protocol → route directly to that plugin's flow (e.g. `hyperliquid quickstart` or `polymarket quickstart`).
-- If the intent was general discovery → ask: "You already have Hyperliquid and Polymarket installed. Which would you like to use?"
+- If the intent was general discovery → ask which installed plugin they'd like to use.
 
-**Case B — One or both missing**: install only what is absent, then show the table:
+**Case B — Neither plugin is installed**: install both, then show the table:
 
 ```bash
 [ "$HL_INSTALLED" = "false" ] && npx skills add okx/plugin-store --skill hyperliquid-plugin --yes --global
