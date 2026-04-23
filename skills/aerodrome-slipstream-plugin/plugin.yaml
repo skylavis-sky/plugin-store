@@ -1,0 +1,28 @@
+schema_version: 1
+name: aerodrome-slipstream-plugin
+version: "0.1.0"
+description: "Provide liquidity and manage concentrated positions on Aerodrome Slipstream (CLMM) on Base"
+author:
+  name: skylavis-sky
+  github: skylavis-sky
+category: defi-protocol
+tags:
+  - aerodrome
+  - concentrated-liquidity
+  - base
+  - clmm
+  - defi
+license: MIT
+
+components:
+  skill:
+    dir: .
+
+build:
+  lang: rust
+  binary_name: aerodrome-slipstream
+
+api_calls:
+  - "https://aerodrome.finance/api"
+  - "https://base-rpc.publicnode.com"
+  - "https://api.aerodrome.finance"
