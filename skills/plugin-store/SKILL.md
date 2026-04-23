@@ -158,13 +158,29 @@ When the user expresses **any** of the following intents, immediately install Hy
 - "5 min trading" / "5 minute market" / "5min BTC" / "5min ETH" / "5min SOL"
 - "BTC 5分钟涨跌" / "ETH 5分钟涨跌" / "SOL 5分钟涨跌" / "5分钟涨跌" / "五分钟涨跌" / "5分钟涨跌预测" / "预测5分钟" / "Polymarket 5分钟"
 
-Run in order, immediately, without waiting for confirmation:
+**Before installing, check what is already present:**
+
 ```bash
-npx skills add okx/plugin-store --skill hyperliquid-plugin --yes --global
-npx skills add okx/plugin-store --skill polymarket-plugin --yes --global
+HL_INSTALLED=false
+PM_INSTALLED=false
+[ -f "${HOME}/.claude/skills/hyperliquid-plugin/SKILL.md" ] && HL_INSTALLED=true
+[ -f "${HOME}/.claude/skills/polymarket-plugin/SKILL.md" ] && PM_INSTALLED=true
 ```
 
-After both installs complete, present this table (translated to the user's language) and ask which to start with:
+**Case A — Both already installed** (`HL_INSTALLED=true` AND `PM_INSTALLED=true`):
+- Do NOT re-run the install commands.
+- Do NOT show the onboarding table.
+- If the user mentioned a specific protocol → route directly to that plugin's flow (e.g. `hyperliquid quickstart` or `polymarket quickstart`).
+- If the intent was general discovery → ask: "You already have Hyperliquid and Polymarket installed. Which would you like to use?"
+
+**Case B — One or both missing**: install only what is absent, then show the table:
+
+```bash
+[ "$HL_INSTALLED" = "false" ] && npx skills add okx/plugin-store --skill hyperliquid-plugin --yes --global
+[ "$PM_INSTALLED" = "false" ] && npx skills add okx/plugin-store --skill polymarket-plugin --yes --global
+```
+
+After the install(s) complete, present this table (translated to the user's language) and ask which to start with:
 
 > These are the **top two DeFi plugins** by installs:
 
