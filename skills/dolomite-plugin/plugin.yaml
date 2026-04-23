@@ -1,0 +1,28 @@
+schema_version: 1
+name: dolomite-plugin
+version: "0.1.0"
+description: "Lend, borrow, and trade with margin on Dolomite's decentralized credit protocol on Arbitrum"
+author:
+  name: skylavis-sky
+  github: skylavis-sky
+category: defi-protocol
+tags:
+  - dolomite
+  - lending
+  - margin
+  - arbitrum
+  - defi
+  - borrow
+license: MIT
+
+components:
+  skill:
+    dir: .
+
+build:
+  lang: rust
+  binary_name: dolomite
+
+api_calls:
+  - "https://api.dolomite.io"
+  - "https://arb1.arbitrum.io/rpc"
