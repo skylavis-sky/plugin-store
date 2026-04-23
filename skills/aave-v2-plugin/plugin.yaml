@@ -1,0 +1,28 @@
+schema_version: 1
+name: aave-v2-plugin
+version: "0.1.0"
+description: "Supply collateral and borrow assets on Aave V2 lending pools on Ethereum Mainnet"
+author:
+  name: skylavis-sky
+  github: skylavis-sky
+category: defi-protocol
+tags:
+  - aave
+  - lending
+  - ethereum
+  - defi
+  - legacy
+  - borrow
+license: MIT
+
+components:
+  skill:
+    dir: .
+
+build:
+  lang: rust
+  binary_name: aave-v2
+
+api_calls:
+  - "https://api.aave.com"
+  - "https://eth.llamarpc.com"
