@@ -1,0 +1,29 @@
+schema_version: 1
+name: spark-savings-plugin
+version: "0.1.0"
+description: "Deposit DAI into the Sky Savings Rate (sUSDS/sDAI) for risk-free yield via Spark Protocol"
+author:
+  name: skylavis-sky
+  github: skylavis-sky
+category: defi-protocol
+tags:
+  - spark
+  - savings
+  - sdai
+  - susds
+  - yield
+  - makerdao
+  - ethereum
+license: MIT
+
+components:
+  skill:
+    dir: .
+
+build:
+  lang: rust
+  binary_name: spark-savings
+
+api_calls:
+  - "https://api.spark.fi"
+  - "https://eth.llamarpc.com"
