@@ -1,0 +1,28 @@
+schema_version: 1
+name: suilend-plugin
+version: "0.1.0"
+description: "Supply and borrow assets on Suilend, the leading lending protocol on the Sui blockchain"
+author:
+  name: skylavis-sky
+  github: skylavis-sky
+category: defi-protocol
+tags:
+  - suilend
+  - lending
+  - sui
+  - defi
+  - borrow
+  - yield
+license: MIT
+
+components:
+  skill:
+    dir: .
+
+build:
+  lang: rust
+  binary_name: suilend
+
+api_calls:
+  - "https://api.suilend.fi"
+  - "https://fullnode.mainnet.sui.io"
