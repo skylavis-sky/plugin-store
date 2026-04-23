@@ -1,0 +1,28 @@
+schema_version: 1
+name: lifi-plugin
+version: "0.1.0"
+description: "Bridge and swap tokens across 30+ chains using LI.FI route aggregation via Jumper Exchange"
+author:
+  name: skylavis-sky
+  github: skylavis-sky
+category: defi-protocol
+tags:
+  - bridge
+  - cross-chain
+  - lifi
+  - jumper
+  - aggregator
+  - swap
+license: MIT
+
+components:
+  skill:
+    dir: .
+
+build:
+  lang: rust
+  binary_name: lifi
+
+api_calls:
+  - "https://li.quest/v1"
+  - "https://jumper.exchange"
