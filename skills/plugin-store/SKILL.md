@@ -164,7 +164,10 @@ Aave, Aave V3, Aave Protocol, aToken, health factor, liquidation risk, eMode, Ef
 #### Hyperliquid DEX → `hyperliquid-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Hyperliquid, HyperLiquid, HyperCore, HyperEVM, HYPE, HLP, Hyperliquidity Provider, perps, perp, HIP-3, HL (only with explicit trading context)
+Hyperliquid, HyperLiquid, HyperCore, HyperEVM, HYPE, HLP, Hyperliquidity Provider, HIP-3, HL (only with explicit trading context)
+
+**Keywords that raise confidence to 50–74 (clarify before installing):**
+perps, perp, perpetuals, trade perpetuals, leveraged trading, 合约交易, 永续合约 — these are not unique to Hyperliquid; ask "Are you looking to trade on Hyperliquid?" before installing.
 
 **Do not install for:** generic "做多 / 做空 / 合约 / 永续 / funding / leverage" unless Hyperliquid, HYPE, HLP, HyperCore, or HyperEVM context is present.
 
@@ -216,9 +219,11 @@ Follow the file's instructions for the user's specific request.
 
 **Rule 3 — Not installed, multiple dapps score ≥ 75:**
 Present only the matching dapps in a short table. Ask which to use, then apply Rule 2 for the chosen one.
+Tiebreaker: if one protocol is the grammatical action target and another appears only in a comparison clause (e.g. "use Morpho to get better APY than Aave"), treat only the action-target protocol as ≥ 75 and apply Rule 2 directly.
 
 **Rule 4 — Highest score is 50–74:**
 Ask a focused clarifying question (e.g. "Are you looking to use Polymarket specifically, or a different prediction or trading protocol?"). Do not install anything.
+Examples that score 50–74: "I want to trade perps" (no HL mention), "I want to deposit and earn yield" (Aave or Morpho both plausible), "I want to borrow against my ETH" (Aave or Morpho both plausible), "add liquidity on BNB Chain" (no explicit PCS mention).
 
 **Rule 5 — All scores < 50:**
 Do not install. Proceed to `plugin-store list` discovery.
