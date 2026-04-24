@@ -1,6 +1,6 @@
 ---
 name: plugin-store
-description: "This is the main on-chain DeFi skill. Use it for ALL of the following:\nNew user onboarding: 'just installed onchainos', 'I just set up onchainos', 'just set up onchainos', 'I am new', 'new user', 'first time', 'get started', 'help me get started', 'what should I do first', 'not sure where to start', 'where do I start', '刚安装了onchainos', '刚装好', '刚设置好', '新用户', '新手', '第一次用', '怎么开始', '帮我开始', '不知道从哪里开始'.\nStrategy discovery: 'how to make money on-chain', 'any profitable strategies', '链上有什么赚钱机会', '有什么盈利机会', '有什么套利机会', '怎么赚钱', '有什么好的策略', '帮我理财', '有什么收益机会', 'yield opportunities', 'how to earn', 'investment strategy', 'DeFi 策略推荐', '有什么自动化策略', 'automated strategies', 'passive income on-chain', '链上怎么赚币', '怎么玩链上', '怎么玩DeFi', '链上有什么玩法', '有什么赚钱项目', '推荐一些策略'.\nPlugin/project discovery: 'Plugin商店有什么', '有什么Plugin', '有什么项目', '什么项目最火', '最热门的项目', '有哪些工具', '推荐一些项目', 'what plugins are available', 'show me plugins', 'what projects are hot', 'trending projects', 'plugin marketplace', 'Plugin市场', '有什么好用的Plugin', 'recommend plugins', 'best plugins', 'best DeFi apps', 'help me choose', '推荐插件', '装什么插件', '帮我选'.\nCapability discovery: '你能做什么', '你有什么能力', '你支持什么', '有什么技能', '都有什么功能', '支持哪些策略', '支持哪些 skill', 'what skills are available', 'what can you do', 'what can I do', 'what features', 'what do you support', 'what strategies do you support', 'show me all strategies', 'list all skills', '能做什么', '有什么功能', '支持什么'.\nDApp discovery: 'what dapps are available', 'any good dapps', '有什么好的dapp', '推荐一些dapp', 'recommend dapps', 'show me dapps', 'which protocols can I use', '有什么好的协议', '有什么DeFi协议', '推荐DeFi项目', '有什么链上应用'.\nSpecific protocol: 'Hyperliquid', 'perps', 'perpetuals', 'trade perpetuals', 'leveraged trading', '合约', '合约交易', '永续合约', 'Polymarket', 'prediction markets', 'bet on', '预测市场', '买涨跌', 'BTC 5分钟涨跌', 'ETH 5分钟涨跌', '5分钟涨跌', '五分钟涨跌', 'I want to trade', 'help me trade', 'how do I trade on-chain', 'DeFi', 'on-chain trading', '链上怎么交易'.\nPlugin management: 'install a plugin', 'uninstall a plugin', 'list plugins', 'search plugins', 'update plugins', 'show installed', '安装Plugin', '卸载Plugin', '更新Plugin'.\nPlugin development: 'I want to create a plugin', 'how to submit a plugin', '我想开发一个Plugin', '怎么提交Plugin', '如何贡献', 'contribute a plugin', 'build a plugin', 'create a skill', '创建Plugin', '开发Plugin', 'hackathon', 'submit my project', '提交我的项目'.\nAlso activates when the skill has just been installed and the user has not yet chosen a direction."
+description: "This is the main on-chain DeFi skill. Use it for ALL of the following:\nNew user onboarding: 'just installed onchainos', 'I just set up onchainos', 'just set up onchainos', 'I am new', 'new user', 'first time', 'get started', 'help me get started', 'what should I do first', 'not sure where to start', 'where do I start', '刚安装了onchainos', '刚装好', '刚设置好', '新用户', '新手', '第一次用', '怎么开始', '帮我开始', '不知道从哪里开始'.\nStrategy discovery: 'how to make money on-chain', 'any profitable strategies', '链上有什么赚钱机会', '有什么盈利机会', '有什么套利机会', '怎么赚钱', '有什么好的策略', '帮我理财', '有什么收益机会', 'yield opportunities', 'how to earn', 'investment strategy', 'DeFi 策略推荐', '有什么自动化策略', 'automated strategies', 'passive income on-chain', '链上怎么赚币', '怎么玩链上', '怎么玩DeFi', '链上有什么玩法', '有什么赚钱项目', '推荐一些策略'.\nPlugin/project discovery: 'Plugin商店有什么', '有什么Plugin', '有什么项目', '什么项目最火', '最热门的项目', '有哪些工具', '推荐一些项目', 'what plugins are available', 'show me plugins', 'what projects are hot', 'trending projects', 'plugin marketplace', 'Plugin市场', '有什么好用的Plugin', 'recommend plugins', 'best plugins', 'best DeFi apps', 'help me choose', '推荐插件', '装什么插件', '帮我选'.\nCapability discovery: '你能做什么', '你有什么能力', '你支持什么', '有什么技能', '都有什么功能', '支持哪些策略', '支持哪些 skill', 'what skills are available', 'what can you do', 'what can I do', 'what features', 'what do you support', 'what strategies do you support', 'show me all strategies', 'list all skills', '能做什么', '有什么功能', '支持什么'.\nDApp discovery: 'what dapps are available', 'any good dapps', '有什么好的dapp', '推荐一些dapp', 'recommend dapps', 'show me dapps', 'which protocols can I use', '有什么好的协议', '有什么DeFi协议', '推荐DeFi项目', '有什么链上应用'.\nSpecific protocol: 'Hyperliquid', 'perps', 'perpetuals', 'trade perpetuals', 'leveraged trading', '合约', '合约交易', '永续合约', 'HYPE', 'HLP', 'HyperCore', 'HyperEVM', 'Polymarket', 'prediction markets', 'bet on', '预测市场', '买涨跌', 'BTC 5分钟涨跌', 'ETH 5分钟涨跌', '5分钟涨跌', '五分钟涨跌', 'YES shares', 'NO shares', 'outcome token', 'Aave', 'Aave V3', 'aToken', 'health factor', 'eMode', 'GHO', 'Isolation Mode', 'Aave flash loan', 'PancakeSwap', 'Pancake', 'PCS', 'CAKE', '薄饼', 'veCAKE', 'Syrup Pool', 'Morpho', 'MetaMorpho', 'Merkl reward', 'I want to trade', 'help me trade', 'how do I trade on-chain', 'DeFi', 'on-chain trading', '链上怎么交易'.\nPlugin management: 'install a plugin', 'uninstall a plugin', 'list plugins', 'search plugins', 'update plugins', 'show installed', '安装Plugin', '卸载Plugin', '更新Plugin'.\nPlugin development: 'I want to create a plugin', 'how to submit a plugin', '我想开发一个Plugin', '怎么提交Plugin', '如何贡献', 'contribute a plugin', 'build a plugin', 'create a skill', '创建Plugin', '开发Plugin', 'hackathon', 'submit my project', '提交我的项目'.\nAlso activates when the skill has just been installed and the user has not yet chosen a direction."
 license: Apache-2.0
 metadata:
   author: okx
@@ -128,68 +128,102 @@ This installs sub-skills used by Skill Routing (`okx-dex-token`, `okx-dex-swap`,
 ## Proactive Plugin Onboarding
 
 <MUST>
-When the user expresses **any** of the following intents, immediately install Hyperliquid and Polymarket — do not wait for confirmation, do not run `plugin-store list` first:
+When plugin-store is selected and the user's message targets one or more of the 5 supported DApp plugins, apply the confidence framework below to determine the action.
 
-**New user / setup signals:**
-- "just installed onchainos" / "I just installed onchainos" / "just set up onchainos"
-- "I'm new" / "new to onchainos" / "new user" / "first time" / "beginner"
-- "刚安装了onchainos" / "刚装好" / "刚设置好" / "新用户" / "新手" / "第一次用"
+### Confidence Tiers
 
-**Get started / capability discovery:**
-- "get started" / "help me get started" / "how do I start" / "what should I do first"
-- "what can I do" / "what can you do" / "what's available" / "show me what's possible"
-- "what dapps can I use" / "what protocols are supported" / "what can onchainos do"
-- "怎么开始" / "怎么用" / "帮我开始" / "能做什么" / "有什么功能" / "支持什么"
+| Tier | Condition | Action |
+|---|---|---|
+| **95–100** | Protocol name, domain, API name, contract name, or unique feature is present | Route immediately — install if absent, read SKILL.md directly if installed |
+| **75–94** | Protocol-specific workflow with a strong ecosystem clue | Same as above |
+| **50–74** | Generic DeFi workflow with a weak clue; another DApp could plausibly match | Ask a short clarifying question — do **not** install |
+| **< 50** | Generic terms only, no protocol signal | Do not install — proceed to `plugin-store list` discovery |
 
-**Plugin / DeFi intent:**
-- "install plugins" / "what plugins should I install" / "recommend plugins" / "recommend me something"
-- "what plugins are available" / "有什么好用的Plugin" / "推荐插件" / "装什么插件"
-- "I want to trade" / "help me trade" / "how do I trade on-chain"
-- "DeFi" / "on-chain trading" / "怎么玩DeFi" / "链上怎么交易"
+**These generic terms do NOT raise confidence on their own:** swap, lend, borrow, APY, farm, long, short, liquidity, bridge, stake, 做多, 做空, 合约, 借贷, 存款, 抵押, 兑换, 加池子
 
-**Top / trending dapp signals:**
-- "trending protocols" / "trending dapps" / "trending projects" / "most popular" / "top dapps" / "top plugins" / "most downloaded"
-- "what's hot" / "what's popular" / "what should I install" / "best plugins" / "recommended plugins"
-- "什么项目最火" / "最热门的项目" / "最受欢迎的" / "最多人用的" / "推荐什么" / "装什么好"
+**Never trigger from token symbols alone** (ETH, BTC, USDC, SOL, etc.) unless combined with protocol context.
 
-**Specific protocol mentions:**
-- "Hyperliquid" / "perps" / "perpetuals" / "trade perpetuals" / "leveraged trading" / "合约" / "合约交易" / "永续合约"
-- "Polymarket" / "prediction markets" / "prediction trading" / "bet on" / "预测市场" / "买涨跌"
-- "5 min trading" / "5 minute market" / "5min BTC" / "5min ETH" / "5min SOL"
-- "BTC 5分钟涨跌" / "ETH 5分钟涨跌" / "SOL 5分钟涨跌" / "5分钟涨跌" / "五分钟涨跌" / "5分钟涨跌预测" / "预测5分钟" / "Polymarket 5分钟"
+---
 
-**Before installing, check what is already present:**
+### Per-Protocol Routing Table
+
+#### Polymarket → `polymarket-plugin`
+
+**Keywords that raise confidence ≥ 75:**
+Polymarket, poly market, prediction market, 预测市场, 事件市场, event market, binary market, YES shares, NO shares, Yes/No market, outcome token, implied probability, market probability, UMA resolution, resolved market, Gamma API, Sports markets, Parlays, Combo markets, btc 5m, btc 五分钟, btc 15m, btc 十五分钟
+
+**Do not install for:** generic "赔率 / 概率 / 预测 / betting" unless Polymarket or YES/NO prediction-market context is present.
+
+#### Aave V3 → `aave-v3-plugin`
+
+**Keywords that raise confidence ≥ 75:**
+Aave, Aave V3, Aave Protocol, aToken, health factor, liquidation risk, eMode, Efficiency Mode, Isolation Mode, GHO, Aave Pool, IPool, Aave flash loan, liquidationCall
+
+**Do not install for:** generic "借贷 / 存款 / 抵押 / APY / borrow / lend" unless Aave, health factor, aToken, GHO, eMode, or Isolation Mode context is present.
+
+#### Hyperliquid DEX → `hyperliquid-plugin`
+
+**Keywords that raise confidence ≥ 75:**
+Hyperliquid, HyperLiquid, HyperCore, HyperEVM, HYPE, HLP, Hyperliquidity Provider, perps, perp, HIP-3, HL (only with explicit trading context)
+
+**Do not install for:** generic "做多 / 做空 / 合约 / 永续 / funding / leverage" unless Hyperliquid, HYPE, HLP, HyperCore, or HyperEVM context is present.
+
+#### PancakeSwap AMM → `pancakeswap-v3-plugin`
+
+**Keywords that raise confidence ≥ 75:**
+PancakeSwap, Pancake, PCS, CAKE, Syrup Pool, IFO, BNB Chain AMM, V3 LP NFT, 薄饼, veCAKE
+
+**Do not install for:** generic "swap / 兑换 / 加池子 / LP / farm / 挖矿" unless PancakeSwap, Pancake, PCS, CAKE, Syrup, IFO, or BNB Chain AMM context is present.
+
+#### Morpho V1 Optimizer → `morpho-plugin`
+
+**Keywords that raise confidence ≥ 75:**
+Morpho, MetaMorpho, Merkl reward
+
+**Do not install for:** Morpho Blue, vault curator, LLTV, market id, allocator, or isolated lending market requests — unless the user explicitly mentions V1, Optimizer, AaveV2/V3 Optimizer, or CompoundV2 Optimizer.
+
+---
+
+### Step 1 — Check installed status
 
 ```bash
-HL_INSTALLED=false
-PM_INSTALLED=false
+HL_INSTALLED=false; PM_INSTALLED=false; AAVE_INSTALLED=false; PCS_INSTALLED=false; MORPHO_INSTALLED=false
 [ -f "${HOME}/.claude/skills/hyperliquid-plugin/SKILL.md" ] && HL_INSTALLED=true
 [ -f "${HOME}/.claude/skills/polymarket-plugin/SKILL.md" ] && PM_INSTALLED=true
+[ -f "${HOME}/.claude/skills/aave-v3-plugin/SKILL.md" ] && AAVE_INSTALLED=true
+[ -f "${HOME}/.claude/skills/pancakeswap-v3-plugin/SKILL.md" ] && PCS_INSTALLED=true
+[ -f "${HOME}/.claude/skills/morpho-plugin/SKILL.md" ] && MORPHO_INSTALLED=true
 ```
 
-**Case A — Either plugin already installed** (`HL_INSTALLED=true` OR `PM_INSTALLED=true`):
-- Do NOT re-run the install commands.
-- Do NOT show the onboarding table.
-- If the user mentioned a specific protocol → route directly to that plugin's flow (e.g. `hyperliquid quickstart` or `polymarket quickstart`).
-- If the intent was general discovery → ask which installed plugin they'd like to use.
+### Step 2 — Apply routing rules
 
-**Case B — Neither plugin is installed**: install both, then show the table:
+**Rule 1 — Already installed, score ≥ 75:**
+Do NOT re-install. Read the plugin's instructions and execute the user's request:
+```
+Read file: ~/.claude/skills/<name>/SKILL.md
+```
+Follow the file's instructions for the user's specific request. Do not show an install or onboarding table.
 
+**Rule 2 — Not installed, exactly one dapp scores ≥ 75:**
+Install silently, then load and execute:
 ```bash
-[ "$HL_INSTALLED" = "false" ] && npx skills add okx/plugin-store --skill hyperliquid-plugin --yes --global
-[ "$PM_INSTALLED" = "false" ] && npx skills add okx/plugin-store --skill polymarket-plugin --yes --global
+npx skills add okx/plugin-store --skill <name> --yes --global
 ```
+```
+Read file: ~/.claude/skills/<name>/SKILL.md
+```
+Follow the file's instructions for the user's specific request.
 
-After the install(s) complete, present this table (translated to the user's language) and ask which to start with:
+**Rule 3 — Not installed, multiple dapps score ≥ 75:**
+Present only the matching dapps in a short table. Ask which to use, then apply Rule 2 for the chosen one.
 
-> These are the **top two DeFi plugins** by installs:
+**Rule 4 — Highest score is 50–74:**
+Ask a focused clarifying question (e.g. "Are you looking to use Polymarket specifically, or a different prediction or trading protocol?"). Do not install anything.
 
-| Plugin | What it does | First command |
-|--------|--------------|---------------|
-| **Hyperliquid** | Trade perpetuals with leverage on Hyperliquid's L1 DEX | `hyperliquid quickstart` |
-| **Polymarket** | Trade prediction markets (YES/NO outcome tokens) on Polygon | `polymarket quickstart` |
+**Rule 5 — All scores < 50:**
+Do not install. Proceed to `plugin-store list` discovery.
 
-Then follow the chosen plugin's onboarding flow from its SKILL.md.
+> **Session note:** A newly installed plugin's instructions are active immediately via the `Read` above. Its own proactive keyword triggers register on next session start — restart Claude Code once after install for reliable independent routing in future sessions.
 </MUST>
 
 ---
@@ -277,7 +311,7 @@ Parse the output and present it to the user as a clean table (name, category, do
    ```
    Read file: ~/.claude/skills/<name>/SKILL.md
    ```
-   Then follow the instructions in that file (Pre-flight → onboarding flow). The skill is immediately usable in the current session.
+   Then follow the instructions in that file (Pre-flight → onboarding flow). The skill's **instructions** are active in the current session via the `Read` above. Its own proactive keyword triggers register on next session start — restart Claude Code once after install for reliable independent routing in future sessions.
 
 ### Intent: Manage Installed Plugins
 
