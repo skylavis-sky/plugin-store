@@ -361,23 +361,35 @@ pub async fn run(
         OrderVersion::V2 => {
             let pusd_bal = pusd_balance_result.unwrap_or(0.0);
             let pusd_raw = (pusd_bal * 1_000_000.0).floor() as u64;
-            if pusd_raw < usdc_needed_raw {
+
+            // V2 server deducts order_amount + fee from pUSD at submission time.
+            // Compute required pUSD including fee (ceiling division to avoid rounding short).
+            let fee_buffer = ((usdc_needed_raw as u128 * fee_rate_bps as u128) + 9_999) / 10_000;
+            let total_needed = usdc_needed_raw + fee_buffer as u64;
+
+            if pusd_raw < total_needed {
                 // pUSD insufficient — check USDC.e for auto-wrap opportunity.
                 let usdc_e_bal = usdc_e_balance_result.unwrap_or(0.0);
                 let usdc_e_raw = (usdc_e_bal * 1_000_000.0).floor() as u64;
-                if usdc_e_raw >= usdc_needed_raw {
-                    // Auto-wrap USDC.e → pUSD before placing the order.
+                // Wrap only the shortfall: existing pUSD partially covers order + fee.
+                let shortfall = total_needed - pusd_raw;
+                if usdc_e_raw >= shortfall {
+                    // Auto-wrap USDC.e → pUSD (shortfall only) before placing the order.
                     eprintln!(
-                        "[polymarket] V2 requires pUSD collateral. pUSD balance ${:.2} < ${:.2} needed. \
-                         Auto-wrapping USDC.e → pUSD...",
-                        pusd_bal, actual_usdc
+                        "[polymarket] V2 requires pUSD collateral. pUSD balance ${:.6} < ${:.6} needed \
+                         (order ${:.6} + fee ${:.6}). Auto-wrapping ${:.6} USDC.e → pUSD...",
+                        pusd_bal,
+                        total_needed as f64 / 1_000_000.0,
+                        actual_usdc,
+                        fee_buffer as f64 / 1_000_000.0,
+                        shortfall as f64 / 1_000_000.0,
                     );
                     let wrap_tx = match &effective_mode {
                         TradingMode::Eoa => {
-                            wrap_usdc_to_pusd(balance_addr, usdc_needed_raw as u128).await?
+                            wrap_usdc_to_pusd(balance_addr, shortfall as u128).await?
                         }
                         TradingMode::PolyProxy => {
-                            proxy_wrap_usdc_to_pusd(balance_addr, usdc_needed_raw as u128).await?
+                            proxy_wrap_usdc_to_pusd(balance_addr, shortfall as u128).await?
                         }
                     };
                     eprintln!("[polymarket] Wrap tx: {}. Waiting for confirmation...", wrap_tx);
@@ -385,11 +397,12 @@ pub async fn run(
                     eprintln!("[polymarket] Wrapped. Proceeding with order.");
                 } else {
                     // Neither pUSD nor USDC.e is sufficient.
+                    let total_needed_f64 = total_needed as f64 / 1_000_000.0;
                     let tip = match &effective_mode {
                         TradingMode::PolyProxy => format!(
                             "Run `polymarket deposit --amount {:.2}` to top up the proxy wallet, \
                              then the deposit will be auto-wrapped to pUSD on the next buy.",
-                            actual_usdc
+                            total_needed_f64
                         ),
                         TradingMode::Eoa => {
                             let proxy_hint = crate::config::load_credentials()
@@ -409,9 +422,12 @@ pub async fn run(
                         }
                     };
                     bail!(
-                        "Insufficient balance for V2 order: have ${:.2} pUSD + ${:.2} USDC.e, \
-                         need ${:.2}. {}",
-                        pusd_bal, usdc_e_bal, actual_usdc, tip
+                        "Insufficient balance for V2 order: have ${:.6} pUSD + ${:.6} USDC.e, \
+                         need ${:.6} (order ${:.6} + fee ${:.6}). {}",
+                        pusd_bal, usdc_e_bal,
+                        total_needed_f64, actual_usdc,
+                        fee_buffer as f64 / 1_000_000.0,
+                        tip
                     );
                 }
             }

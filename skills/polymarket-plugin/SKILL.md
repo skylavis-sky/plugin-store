@@ -613,6 +613,8 @@ polymarket-plugin buy --market-id <id> --outcome <outcome> --amount <usdc> [--pr
 **On-chain ops (EOA mode only):** If collateral allowance is insufficient, runs `onchainos wallet contract-call` automatically. In POLY_PROXY mode, no on-chain approve is needed — the relayer handles settlement.
 
 > ⚠️ **Approval notice**: Before each buy, the plugin checks the collateral allowance (pUSD for V2, USDC.e for V1) and, if insufficient, submits an `approve(exchange, amount)` transaction for **exactly the order amount** — no more. For V2 orders, if pUSD balance is insufficient but USDC.e is sufficient, the plugin first **auto-wraps** USDC.e → pUSD via the Collateral Onramp (approve + wrap, two txs). All of this fires automatically. **Agent confirmation before calling `buy` is the sole safety gate.**
+>
+> ⚠️ **V2 first-trade gas (EOA mode)**: The Polymarket V2 cutover (≈ 2026-04-28) requires new on-chain approvals to V2 exchange contracts. On the first V2 buy in **EOA mode**, the plugin will submit up to 3 approval txs (pUSD → CTF_EXCHANGE_V2, NEG_RISK_CTF_EXCHANGE_V2, NEG_RISK_ADAPTER) plus the wrap tx if USDC.e needs converting — each costs a small amount of POL gas. **Keep ~0.05 POL in your EOA wallet before the first V2 trade.** Subsequent trades are gas-free for approvals (idempotency check skips already-granted allowances). In POLY_PROXY mode, all V2 approvals are handled once during `setup-proxy`.
 
 **Amount encoding:** Collateral amounts (USDC.e / pUSD) are 6-decimal. Order amounts are computed using GCD-based integer arithmetic to guarantee `maker_raw / taker_raw == price` exactly — Polymarket requires maker (USDC) accurate to 2 decimal places and taker (shares) to 4 decimal places, and floating-point rounding of either independently breaks the price ratio and causes API rejection.
 
@@ -944,7 +946,7 @@ polymarket redeem --market-id will-trump-win-2024
 
 ### `setup-proxy` — Create a Proxy Wallet (Gasless Trading)
 
-Deploy a Polymarket proxy wallet and switch to POLY_PROXY mode. One-time POL gas cost; all subsequent trading is relayer-paid (no POL needed per order).
+Deploy a Polymarket proxy wallet and switch to POLY_PROXY mode. One-time POL gas cost; all subsequent trading is relayer-paid (no POL needed per order). Also sets up the V2 pUSD approvals required post-2026-04-28 cutover (idempotent — safe to re-run).
 
 ```
 polymarket setup-proxy [--dry-run]
