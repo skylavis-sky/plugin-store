@@ -559,6 +559,35 @@ pub async fn withdraw_pusd_from_proxy(eoa_addr: &str, amount: u128) -> Result<St
 }
 
 /// Get USDC.e ERC-20 allowance for owner → spender. Returns raw amount (6 decimals).
+pub async fn get_pusd_allowance(owner: &str, spender: &str) -> Result<u128> {
+    use crate::config::{Contracts, Urls};
+    // allowance(address,address) selector = 0xdd62ed3e
+    let data = format!("0xdd62ed3e{}{}", pad_address(owner), pad_address(spender));
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{ "to": Contracts::PUSD, "data": data }, "latest"],
+        "id": 1
+    });
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(Urls::POLYGON_RPC)
+        .json(&body)
+        .send()
+        .await
+        .context("Polygon RPC request failed")?
+        .json()
+        .await
+        .context("parsing RPC response")?;
+    if let Some(err) = v.get("error") {
+        anyhow::bail!("Polygon RPC error: {}", err);
+    }
+    let hex = v["result"].as_str().unwrap_or("0x").trim_start_matches("0x");
+    if hex.is_empty() || hex.chars().all(|c| c == '0') {
+        return Ok(0);
+    }
+    Ok(u128::from_str_radix(hex, 16).unwrap_or(u128::MAX))
+}
+
 pub async fn get_usdc_allowance(owner: &str, spender: &str) -> Result<u128> {
     use crate::config::{Contracts, Urls};
     // allowance(address,address) selector = 0xdd62ed3e
