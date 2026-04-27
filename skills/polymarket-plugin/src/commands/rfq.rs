@@ -118,7 +118,7 @@ pub async fn run(
     let creds = ensure_credentials(&client, &signer_addr).await?;
 
     // Confirm flow always uses V2 signing (RFQ is a V2-only feature).
-    let clob_version_raw = get_clob_version(&client).await;
+    let clob_version_raw = get_clob_version(&client).await?;
     let _clob_version = if clob_version_raw == 2 { OrderVersion::V2 } else { OrderVersion::V1 };
 
     // Resolve maker address from trading mode.

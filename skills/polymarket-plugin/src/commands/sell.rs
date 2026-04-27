@@ -253,7 +253,7 @@ pub async fn run(
     use crate::config::{Contracts, TradingMode};
 
     // Fetch CLOB version in parallel with credentials.
-    let clob_version_raw = get_clob_version(&client).await;
+    let clob_version_raw = get_clob_version(&client).await?;
     let clob_version = if clob_version_raw == 2 { OrderVersion::V2 } else { OrderVersion::V1 };
 
     // Wallet address was pre-fetched in parallel with the order book (non-dry-run path).

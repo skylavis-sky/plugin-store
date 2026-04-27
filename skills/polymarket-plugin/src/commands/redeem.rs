@@ -244,6 +244,7 @@ pub async fn run(market_id: &str, dry_run: bool) -> Result<()> {
         get_clob_version(&client),
     );
     let eoa_addr = eoa_addr?;
+    let clob_version_raw = clob_version_raw?;
     // Use pUSD as collateral for V2 markets (cutover ~2026-04-28).
     let collateral_addr = if clob_version_raw == 2 { Contracts::PUSD } else { Contracts::USDC_E };
     let creds = load_credentials().unwrap_or_default();
@@ -292,6 +293,7 @@ pub async fn run_all(dry_run: bool) -> Result<()> {
         get_clob_version(&client),
     );
     let eoa_addr = eoa_addr?;
+    let clob_version_raw = clob_version_raw?;
     // Use pUSD as collateral for V2 markets (cutover ~2026-04-28).
     let collateral_addr = if clob_version_raw == 2 { Contracts::PUSD } else { Contracts::USDC_E };
     let creds = load_credentials().unwrap_or_default();

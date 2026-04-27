@@ -269,7 +269,7 @@ pub async fn run(
     if dry_run {
         use crate::config::Contracts;
         // Fetch CLOB version to show which exchange contract + collateral would be used.
-        let dry_clob_version_raw = get_clob_version(&client).await;
+        let dry_clob_version_raw = get_clob_version(&client).await?;
         let dry_clob_version = if dry_clob_version_raw == 2 { OrderVersion::V2 } else { OrderVersion::V1 };
         let dry_exchange_addr = Contracts::exchange(dry_clob_version, neg_risk);
         let dry_collateral = if dry_clob_version == OrderVersion::V2 { Contracts::PUSD } else { Contracts::USDC_E };
@@ -351,6 +351,7 @@ pub async fn run(
         get_pusd_balance(balance_addr),
         get_balance_allowance(&client, balance_addr, &creds, "COLLATERAL", None),
     );
+    let clob_version_raw = clob_version_raw?;
     let clob_version = if clob_version_raw == 2 { OrderVersion::V2 } else { OrderVersion::V1 };
     let allowance_info = allowance_info?;
 
@@ -366,6 +367,36 @@ pub async fn run(
             // Compute required pUSD including fee (ceiling division to avoid rounding short).
             let fee_buffer = ((usdc_needed_raw as u128 * fee_rate_bps as u128) + 9_999) / 10_000;
             let total_needed = usdc_needed_raw + fee_buffer as u64;
+
+            // Pre-flight POL gas check (POLY_PROXY only):
+            // V2 trading on a proxy may need up to two EOA-paid txs — USDC.e→pUSD wrap
+            // and a one-time pUSD approve to V2 contracts. Surface the requirement up
+            // front so the user isn't half-way through the flow when they run out of gas.
+            // Skipped if no on-chain action is needed (pUSD already covers + already approved).
+            if effective_mode == TradingMode::PolyProxy && !dry_run {
+                let will_wrap = pusd_raw < total_needed;
+                let exchange_addr = Contracts::exchange(clob_version, neg_risk);
+                let pusd_allowance = crate::onchainos::get_pusd_allowance(
+                    maker_addr.as_str(), exchange_addr,
+                ).await.unwrap_or(0);
+                let will_approve = pusd_allowance < (usdc_needed_raw as u128);
+                if will_wrap || will_approve {
+                    let pol = crate::onchainos::get_pol_balance(&signer_addr)
+                        .await.unwrap_or(0.0);
+                    const MIN_POL: f64 = 0.05;
+                    if pol < MIN_POL {
+                        let mut actions = Vec::new();
+                        if will_wrap   { actions.push("USDC.e→pUSD wrap"); }
+                        if will_approve { actions.push("V2 pUSD approve"); }
+                        bail!(
+                            "Insufficient POL gas on EOA wallet ({}) for V2 trading: have {:.4} POL, \
+                             need ≥ {:.2} POL to cover the {} transaction(s). \
+                             Send POL to your EOA on Polygon and retry.",
+                            signer_addr, pol, MIN_POL, actions.join(" + ")
+                        );
+                    }
+                }
+            }
 
             if pusd_raw < total_needed {
                 // pUSD insufficient — check USDC.e for auto-wrap opportunity.
@@ -526,19 +557,25 @@ pub async fn run(
             eprintln!("[polymarket] Approval confirmed.");
         }
     } else if effective_mode == TradingMode::PolyProxy && clob_version == OrderVersion::V2 {
-        // POLY_PROXY + V2: pUSD approval to V2 exchange contracts may not have been set at
-        // setup-proxy time (setup-proxy predates V2). Check the CLOB's allowance view and
-        // submit a proxy pUSD approve if the allowance is insufficient.
-        // This is idempotent — unlimited approval (maxUint) means it only fires once.
+        // POLY_PROXY + V2: query pUSD allowance on-chain (not via CLOB API).
+        // The CLOB /balance-allowance endpoint hard-codes signature_type=0, which scopes
+        // the lookup to the EOA address — but the V2 pUSD approvals live on the proxy
+        // wallet (set by setup-proxy or a prior lazy approve). Querying on-chain matches
+        // the source of truth and prevents redundant approve txs on every buy.
+        // Idempotent — unlimited approval (maxUint) means it only fires once.
         let exchange_addr = Contracts::exchange(clob_version, neg_risk);
+        let needed_u128 = usdc_needed_raw as u128;
         let allowance_raw = if neg_risk {
-            let a_exchange = allowance_info.allowance_for(exchange_addr);
-            let a_adapter  = allowance_info.allowance_for(Contracts::NEG_RISK_ADAPTER);
+            let a_exchange = crate::onchainos::get_pusd_allowance(maker_addr.as_str(), exchange_addr)
+                .await.unwrap_or(0);
+            let a_adapter  = crate::onchainos::get_pusd_allowance(maker_addr.as_str(), Contracts::NEG_RISK_ADAPTER)
+                .await.unwrap_or(0);
             a_exchange.min(a_adapter)
         } else {
-            allowance_info.allowance_for(exchange_addr)
+            crate::onchainos::get_pusd_allowance(maker_addr.as_str(), exchange_addr)
+                .await.unwrap_or(0)
         };
-        if allowance_raw < usdc_needed_raw {
+        if allowance_raw < needed_u128 {
             let version_label = if neg_risk { "Neg Risk CTF Exchange V2" } else { "CTF Exchange V2" };
             eprintln!("[polymarket] Proxy pUSD allowance insufficient for {}. Approving via proxy...", version_label);
             let tx = proxy_pusd_approve(exchange_addr).await?;
