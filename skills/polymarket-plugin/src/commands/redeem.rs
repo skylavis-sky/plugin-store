@@ -1,11 +1,14 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use reqwest::Client;
 
 use crate::api::{get_clob_market, get_clob_version, get_gamma_market_by_slug, get_positions};
 use crate::config::{Contracts, load_credentials};
 use crate::onchainos::{
-    ctf_redeem_positions, ctf_redeem_via_proxy, get_wallet_address, wait_for_tx_receipt,
+    ctf_redeem_positions, ctf_redeem_via_proxy, decimal_str_to_hex64, get_ctf_balance,
+    get_wallet_address, negrisk_redeem_positions, wait_for_tx_receipt, wait_for_tx_receipt_labeled,
 };
+
+const REDEEM_WAIT_SECS: u64 = 120;
 
 /// Resolve (condition_id, neg_risk, question) from a market_id (condition_id or slug).
 async fn resolve_market(client: &Client, market_id: &str) -> Result<(String, bool, String)> {
@@ -141,16 +144,98 @@ async fn redeem_one(
     Ok(out)
 }
 
+/// Redeem neg_risk (multi-outcome) market via NegRiskAdapter.redeemPositions.
+/// Queries on-chain ERC-1155 balances for each token_id, then broadcasts.
+async fn redeem_one_negrisk(
+    condition_id: &str,
+    question: &str,
+    token_ids: &[String],
+    eoa_addr: &str,
+) -> Result<serde_json::Value> {
+    let cid_display = format!("0x{}", condition_id.trim_start_matches("0x"));
+
+    // Validate token IDs can be encoded.
+    for tid in token_ids {
+        decimal_str_to_hex64(tid)
+            .with_context(|| format!("token_id '{}' is not a valid decimal integer", tid))?;
+    }
+
+    // Query on-chain ERC-1155 balances for each outcome.
+    let mut amounts: Vec<u128> = Vec::with_capacity(token_ids.len());
+    for tid in token_ids {
+        let bal = get_ctf_balance(eoa_addr, tid).await.unwrap_or(0);
+        amounts.push(bal);
+    }
+
+    if amounts.iter().all(|&a| a == 0) {
+        bail!(
+            "No outcome token balance found on-chain for {} in EOA wallet {}. \
+             Market may not be resolved yet, or tokens may be in a different wallet.",
+            cid_display, eoa_addr
+        );
+    }
+
+    let total_shares: u128 = amounts.iter().sum();
+    eprintln!(
+        "[polymarket] NegRisk redeem: {} total shares across {} outcomes — submitting NegRiskAdapter.redeemPositions...",
+        total_shares, amounts.len()
+    );
+    let tx = negrisk_redeem_positions(condition_id, &amounts, eoa_addr).await?;
+    eprintln!(
+        "[polymarket] NegRisk redeem tx {} — waiting up to {}s for on-chain confirmation...",
+        tx, REDEEM_WAIT_SECS
+    );
+    wait_for_tx_receipt_labeled(&tx, REDEEM_WAIT_SECS, "NegRisk redeem").await?;
+
+    Ok(serde_json::json!({
+        "condition_id": cid_display,
+        "question": question,
+        "neg_risk": true,
+        "eoa_tx": tx,
+        "amounts": amounts.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+        "note": "NegRiskAdapter.redeemPositions confirmed. USDC.e transferred to EOA.",
+    }))
+}
+
 /// Redeem a single market by market_id (condition_id or slug).
 pub async fn run(market_id: &str, dry_run: bool) -> Result<()> {
     let client = Client::new();
     let (condition_id, neg_risk, question) = resolve_market(&client, market_id).await?;
 
     if neg_risk {
-        bail!(
-            "redeem is not supported for neg_risk (multi-outcome) markets — \
-             use the Polymarket web UI to redeem positions in this market"
+        // Fetch CLOB token IDs for on-chain balance queries.
+        let clob = get_clob_market(&client, &condition_id).await
+            .context("Failed to fetch CLOB market for NegRisk token IDs")?;
+        let token_ids: Vec<String> = clob.tokens.iter().map(|t| t.token_id.clone()).collect();
+
+        if dry_run {
+            let cid_display = format!("0x{}", condition_id.trim_start_matches("0x"));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": true,
+                    "data": {
+                        "dry_run": true,
+                        "market_id": market_id,
+                        "condition_id": cid_display,
+                        "question": question,
+                        "neg_risk": true,
+                        "action": "NegRiskAdapter.redeemPositions",
+                        "token_ids": token_ids,
+                        "note": "dry-run: will query on-chain ERC-1155 balances and call NegRiskAdapter.redeemPositions."
+                    }
+                }))?
+            );
+            return Ok(());
+        }
+
+        let eoa_addr = get_wallet_address().await?;
+        let result = redeem_one_negrisk(&condition_id, &question, &token_ids, &eoa_addr).await?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "ok": true, "data": result }))?
         );
+        return Ok(());
     }
 
     let cid_display = format!("0x{}", condition_id.trim_start_matches("0x"));
@@ -290,7 +375,20 @@ pub async fn run_all(dry_run: bool) -> Result<()> {
             redeemable.len(),
             title
         );
-        match redeem_one(&client, cid, title, &eoa_addr, proxy_addr.as_deref(), collateral_addr).await {
+        // Fetch neg_risk status + token IDs for each market.
+        let clob = get_clob_market(&client, cid).await;
+        let is_neg_risk = clob.as_ref().map(|m| m.neg_risk).unwrap_or(false);
+        let token_ids: Vec<String> = clob.as_ref()
+            .map(|m| m.tokens.iter().map(|t| t.token_id.clone()).collect())
+            .unwrap_or_default();
+
+        let result = if is_neg_risk && !token_ids.is_empty() {
+            redeem_one_negrisk(cid, title, &token_ids, &eoa_addr).await
+        } else {
+            redeem_one(&client, cid, title, &eoa_addr, proxy_addr.as_deref(), collateral_addr).await
+        };
+
+        match result {
             Ok(r) => results.push(r),
             Err(e) => {
                 eprintln!("[polymarket] Error redeeming {}: {}", cid, e);

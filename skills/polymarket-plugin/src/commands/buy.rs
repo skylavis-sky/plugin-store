@@ -8,7 +8,7 @@ use crate::api::{
 };
 use crate::auth::ensure_credentials;
 use crate::config::OrderVersion;
-use crate::onchainos::{get_pusd_balance, get_usdc_balance, get_wallet_address,
+use crate::onchainos::{approve_timeout_secs, get_pusd_balance, get_usdc_balance, get_wallet_address,
     proxy_pusd_approve, proxy_wrap_usdc_to_pusd, wait_for_tx_receipt, wrap_usdc_to_pusd};
 use crate::series;
 use crate::signing::{sign_order_v2_via_onchainos, sign_order_via_onchainos, OrderParams,
@@ -381,7 +381,7 @@ pub async fn run(
                         }
                     };
                     eprintln!("[polymarket] Wrap tx: {}. Waiting for confirmation...", wrap_tx);
-                    wait_for_tx_receipt(&wrap_tx, 30).await?;
+                    wait_for_tx_receipt(&wrap_tx, approve_timeout_secs()).await?;
                     eprintln!("[polymarket] Wrapped. Proceeding with order.");
                 } else {
                     // Neither pUSD nor USDC.e is sufficient.
@@ -506,7 +506,7 @@ pub async fn run(
             let tx_hash = approve_usdc_versioned(neg_risk, clob_version, usdc_needed_raw).await?;
             eprintln!("[polymarket] Approval tx: {}", tx_hash);
             eprintln!("[polymarket] Waiting for approval to confirm on-chain...");
-            crate::onchainos::wait_for_tx_receipt(&tx_hash, 30).await?;
+            crate::onchainos::wait_for_tx_receipt(&tx_hash, approve_timeout_secs()).await?;
             eprintln!("[polymarket] Approval confirmed.");
         }
     } else if effective_mode == TradingMode::PolyProxy && clob_version == OrderVersion::V2 {
@@ -527,11 +527,11 @@ pub async fn run(
             eprintln!("[polymarket] Proxy pUSD allowance insufficient for {}. Approving via proxy...", version_label);
             let tx = proxy_pusd_approve(exchange_addr).await?;
             eprintln!("[polymarket] Proxy pUSD approval tx: {}. Waiting for confirmation...", tx);
-            wait_for_tx_receipt(&tx, 30).await?;
+            wait_for_tx_receipt(&tx, approve_timeout_secs()).await?;
             if neg_risk {
                 eprintln!("[polymarket] Approving pUSD for Neg Risk Adapter via proxy...");
                 let tx2 = proxy_pusd_approve(Contracts::NEG_RISK_ADAPTER).await?;
-                wait_for_tx_receipt(&tx2, 30).await?;
+                wait_for_tx_receipt(&tx2, approve_timeout_secs()).await?;
             }
             eprintln!("[polymarket] Proxy pUSD approval confirmed.");
         }
@@ -794,7 +794,7 @@ fn rand_salt() -> u64 {
 async fn approve_usdc_versioned(
     neg_risk: bool,
     version: OrderVersion,
-    amount_raw: u64,
+    _amount_raw: u64,
 ) -> anyhow::Result<String> {
     use crate::config::Contracts;
     use crate::onchainos::usdc_approve;
@@ -805,12 +805,13 @@ async fn approve_usdc_versioned(
     };
     let exchange_addr = Contracts::exchange(version, neg_risk);
 
-    // For neg-risk markets we also need the NEG_RISK_ADAPTER approval.
+    // Always approve u128::MAX — setting an exact amount causes unnecessary re-approval
+    // on every trade when a MAX_UINT allowance was already granted previously.
     if neg_risk {
         let adapter_addr = Contracts::NEG_RISK_ADAPTER;
-        usdc_approve(collateral_token, exchange_addr, amount_raw as u128).await?;
-        return usdc_approve(collateral_token, adapter_addr, amount_raw as u128).await;
+        usdc_approve(collateral_token, exchange_addr, u128::MAX).await?;
+        return usdc_approve(collateral_token, adapter_addr, u128::MAX).await;
     }
 
-    usdc_approve(collateral_token, exchange_addr, amount_raw as u128).await
+    usdc_approve(collateral_token, exchange_addr, u128::MAX).await
 }

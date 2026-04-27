@@ -62,6 +62,13 @@ enum Commands {
     /// Show POL and USDC.e balances for the EOA wallet (and proxy wallet if initialized)
     Balance,
 
+    /// Check Polymarket status, wallet balances, open positions, and onboarding readiness
+    Quickstart {
+        /// Wallet address to query (defaults to active onchainos wallet)
+        #[arg(long)]
+        address: Option<String>,
+    },
+
     /// Show current and next slot for a recurring series market (no auth required)
     GetSeries {
         /// Series identifier (e.g. btc-5m, eth-15m, btc-4h). Omit to list all.
@@ -365,6 +372,9 @@ async fn main() {
         }
         Commands::Balance => {
             commands::balance::run().await
+        }
+        Commands::Quickstart { address } => {
+            commands::quickstart::run(commands::quickstart::QuickstartArgs { address }).await
         }
         Commands::GetSeries { series, list } => {
             commands::get_series::run(series.as_deref(), list).await

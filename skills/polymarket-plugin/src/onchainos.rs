@@ -4,6 +4,38 @@ use serde_json::Value;
 
 const CHAIN: &str = "137";
 
+/// Return the path to the onchainos binary.
+///
+/// Non-interactive shells (e.g. Claude Code's Bash tool) never source ~/.zshrc, so
+/// ~/.local/bin is missing from PATH and `Command::new("onchainos")` fails with
+/// "os error 2 (No such file or directory)".
+///
+/// Resolution order:
+/// 1. `POLYMARKET_ONCHAINOS_BIN` env var — used in tests to inject a mock binary.
+/// 2. `~/.local/bin/onchainos` — the default install location for the onchainos CLI.
+/// 3. Bare `"onchainos"` — for systems where it is already in the subprocess PATH.
+fn onchainos_bin() -> std::ffi::OsString {
+    if let Ok(override_path) = std::env::var("POLYMARKET_ONCHAINOS_BIN") {
+        return std::ffi::OsString::from(override_path);
+    }
+    let local = dirs::home_dir()
+        .map(|h| h.join(".local").join("bin").join("onchainos"))
+        .filter(|p| p.is_file());
+    match local {
+        Some(p) => p.into_os_string(),
+        None => std::ffi::OsString::from("onchainos"),
+    }
+}
+
+/// Approval/receipt timeout in seconds — configurable via POLYMARKET_APPROVE_TIMEOUT_SECS.
+/// Default: 90s (covers Polygon congestion windows where 30s caused false timeouts).
+pub fn approve_timeout_secs() -> u64 {
+    std::env::var("POLYMARKET_APPROVE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(90)
+}
+
 /// Sign an EIP-712 structured data JSON via `onchainos sign-message --type eip712`.
 ///
 /// The JSON must include EIP712Domain in the `types` field — this is required for correct
@@ -15,7 +47,7 @@ pub async fn sign_eip712(structured_data_json: &str) -> Result<String> {
     let wallet_addr = get_wallet_address().await
         .context("Failed to resolve wallet address for sign-message")?;
 
-    let output = tokio::process::Command::new("onchainos")
+    let output = tokio::process::Command::new(onchainos_bin())
         .args([
             "wallet", "sign-message",
             "--type", "eip712",
@@ -47,7 +79,7 @@ pub async fn sign_eip712(structured_data_json: &str) -> Result<String> {
 
 /// Call `onchainos wallet contract-call --chain 137 --to <to> --input-data <data> --force`
 pub async fn wallet_contract_call(to: &str, input_data: &str) -> Result<Value> {
-    let output = tokio::process::Command::new("onchainos")
+    let output = tokio::process::Command::new(onchainos_bin())
         .args([
             "wallet",
             "contract-call",
@@ -84,13 +116,41 @@ pub fn extract_tx_hash(result: &Value) -> anyhow::Result<String> {
 
 /// Get the wallet address from `onchainos wallet addresses --chain 137`.
 /// Parses: data.evm[0].address
+///
+/// Returns a specific, actionable error when the onchainos session has expired so
+/// the agent can surface recovery instructions rather than a raw parse error.
 pub async fn get_wallet_address() -> Result<String> {
-    let output = tokio::process::Command::new("onchainos")
+    let output = tokio::process::Command::new(onchainos_bin())
         .args(["wallet", "addresses", "--chain", CHAIN])
         .output()
         .await?;
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let v: Value = serde_json::from_str(&stdout)
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Detect session-expiry / not-logged-in conditions from exit code or error text.
+    let combined = format!("{}{}", stdout, stderr).to_lowercase();
+    let session_expired = !output.status.success()
+        || combined.contains("session")
+        || combined.contains("not logged")
+        || combined.contains("login required")
+        || combined.contains("unauthenticated")
+        || combined.contains("unauthorized");
+
+    let parse_result = serde_json::from_str::<Value>(&stdout);
+    let json_ok = parse_result.as_ref().ok().and_then(|v| v["ok"].as_bool());
+
+    if json_ok == Some(false) || (parse_result.is_err() && session_expired) {
+        anyhow::bail!(
+            "onchainos session has expired or wallet is not connected. \
+             To recover: open a terminal (or use ! in this chat) and run \
+             `onchainos wallet login your@email.com`, complete the login, then retry. \
+             If you already re-logged in, also run \
+             `rm -f ~/.config/polymarket/creds.json` to clear stale Polymarket credentials."
+        );
+    }
+
+    let v = parse_result
         .map_err(|e| anyhow::anyhow!("wallet addresses parse error: {}\nraw: {}", e, stdout))?;
     v["data"]["evm"][0]["address"]
         .as_str()
@@ -866,6 +926,133 @@ pub async fn ctf_redeem_via_proxy(condition_id: &str, collateral_addr: &str) -> 
     extract_tx_hash(&result)
 }
 
+// ─── NegRisk redeem (Bug #2 fix) ─────────────────────────────────────────────
+
+/// Arbitrary-precision decimal string → 32-byte big-endian hex (no 0x prefix).
+/// Used to convert Polymarket's token_id decimal strings to ABI-compatible bytes32.
+pub fn decimal_str_to_hex64(s: &str) -> Result<String> {
+    if s.is_empty() {
+        anyhow::bail!("decimal_str_to_hex64: empty string is not a valid decimal integer");
+    }
+    let mut result = [0u8; 32];
+    for ch in s.chars() {
+        let digit = ch
+            .to_digit(10)
+            .ok_or_else(|| anyhow::anyhow!("decimal_str_to_hex64: invalid digit '{}' in '{}'", ch, s))?;
+        let mut carry = digit as u16;
+        for byte in result.iter_mut().rev() {
+            let val = (*byte as u16) * 10 + carry;
+            *byte = (val & 0xFF) as u8;
+            carry = val >> 8;
+        }
+        if carry != 0 {
+            anyhow::bail!("decimal_str_to_hex64: overflow — value '{}' too large for 32 bytes", s);
+        }
+    }
+    Ok(hex::encode(result))
+}
+
+/// Query the ERC-1155 CTF token balance of `owner` for a given outcome token ID.
+/// `token_id_decimal` is the decimal string as returned by the Polymarket CLOB API.
+/// Returns the raw token balance (atomic units; 1 share = 1_000_000).
+pub async fn get_ctf_balance(owner: &str, token_id_decimal: &str) -> Result<u128> {
+    use crate::config::{Contracts, Urls};
+    // balanceOf(address,uint256) selector = 0x00fdd58e
+    let token_id_hex = decimal_str_to_hex64(token_id_decimal)?;
+    let data = format!("0x00fdd58e{}{}", pad_address(owner), token_id_hex);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{ "to": Contracts::CTF, "data": data }, "latest"],
+        "id": 1
+    });
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(Urls::POLYGON_RPC)
+        .json(&body)
+        .send()
+        .await
+        .context("Polygon RPC request failed")?
+        .json()
+        .await
+        .context("parsing CTF balanceOf response")?;
+    if let Some(err) = v.get("error") {
+        anyhow::bail!("Polygon RPC error in CTF balanceOf: {}", err);
+    }
+    let hex = v["result"].as_str().unwrap_or("0x").trim_start_matches("0x");
+    if hex.is_empty() || hex.chars().all(|c| c == '0') {
+        return Ok(0);
+    }
+    Ok(u128::from_str_radix(hex, 16).unwrap_or(u128::MAX))
+}
+
+/// ABI-encode NegRiskAdapter.redeemPositions(bytes32 conditionId, uint256[] amounts).
+/// `amounts[i]` = balance of outcome slot i (YES=0, NO=1).
+pub fn build_negrisk_redeem_calldata(condition_id: &str, amounts: &[u128]) -> String {
+    use sha3::{Digest, Keccak256};
+
+    let selector = Keccak256::digest(b"redeemPositions(bytes32,uint256[])");
+    let selector_hex = hex::encode(&selector[..4]);
+
+    let cond_id_hex = condition_id.trim_start_matches("0x");
+    let cond_id_pad = format!("{:0>64}", cond_id_hex);
+
+    // Dynamic array offset = 64 (2 × 32-byte static params before the array data start).
+    let array_offset = pad_u256(64u128);
+    let array_len = pad_u256(amounts.len() as u128);
+    let amounts_hex: String = amounts.iter().map(|a| pad_u256(*a)).collect();
+
+    format!(
+        "0x{}{}{}{}{}",
+        selector_hex, cond_id_pad, array_offset, array_len, amounts_hex
+    )
+}
+
+/// Redeem neg_risk positions via NegRiskAdapter.redeemPositions.
+/// Pre-flights via eth_call to surface reverts before broadcasting.
+pub async fn negrisk_redeem_positions(
+    condition_id: &str,
+    amounts: &[u128],
+    from: &str,
+) -> Result<String> {
+    use crate::config::Contracts;
+    let calldata = build_negrisk_redeem_calldata(condition_id, amounts);
+    eth_call_simulate(from, Contracts::NEG_RISK_ADAPTER, &calldata)
+        .await
+        .context("NegRiskAdapter.redeemPositions would revert on-chain")?;
+    let result = wallet_contract_call(Contracts::NEG_RISK_ADAPTER, &calldata).await?;
+    extract_tx_hash(&result)
+}
+
+/// Simulate a contract call via eth_call on Polygon. Returns Ok(()) if no revert.
+/// Use as a pre-flight before wallet_contract_call to catch reverts early.
+pub async fn eth_call_simulate(from: &str, to: &str, input_data: &str) -> Result<()> {
+    use crate::config::Urls;
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{
+            "from": from,
+            "to": to,
+            "data": input_data,
+        }, "latest"],
+        "id": 1
+    });
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(Urls::POLYGON_RPC)
+        .json(&body)
+        .send()
+        .await
+        .context("Polygon RPC eth_call failed")?
+        .json()
+        .await
+        .context("parsing eth_call response")?;
+    if let Some(err) = v.get("error") {
+        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown");
+        anyhow::bail!("eth_call simulation reverted: {}", msg);
+    }
+    Ok(())
+}
+
 /// Get native POL balance for an address (eth_getBalance). Returns human-readable f64 (POL).
 pub async fn get_pol_balance(addr: &str) -> Result<f64> {
     use crate::config::Urls;
@@ -1081,6 +1268,12 @@ pub async fn wait_for_tx_receipt(tx_hash: &str, max_wait_secs: u64) -> Result<()
     }
 }
 
+/// Same as `wait_for_tx_receipt` but with a caller-supplied label for error messages.
+pub async fn wait_for_tx_receipt_labeled(tx_hash: &str, max_wait_secs: u64, label: &str) -> Result<()> {
+    wait_for_tx_receipt(tx_hash, max_wait_secs).await
+        .map_err(|e| anyhow::anyhow!("{} — {}", label, e))
+}
+
 /// Poll eth_getTransactionReceipt on any supported EVM chain until mined or timeout.
 ///
 /// `chain` is the onchainos chain name (e.g. "bnb", "ethereum", "arbitrum").
@@ -1158,7 +1351,7 @@ pub async fn transfer_erc20_on_chain(
     to: &str,
     amount: u128,
 ) -> Result<String> {
-    let output = tokio::process::Command::new("onchainos")
+    let output = tokio::process::Command::new(onchainos_bin())
         .args([
             "wallet", "send",
             "--chain", chain,
@@ -1190,7 +1383,7 @@ pub async fn transfer_erc20_on_chain(
 /// `to` is the destination address.
 /// `amount_wei` is the amount in wei (18 decimals for ETH-like, 9 for others).
 pub async fn transfer_native_on_chain(chain: &str, to: &str, amount_wei: u128) -> Result<String> {
-    let output = tokio::process::Command::new("onchainos")
+    let output = tokio::process::Command::new(onchainos_bin())
         .args([
             "wallet", "send",
             "--chain", chain,
@@ -1288,7 +1481,7 @@ pub async fn get_native_gas_balance(chain: &str) -> f64 {
 }
 
 pub async fn get_chain_balances(chain: &str) -> Vec<ChainTokenBalance> {
-    let output = tokio::process::Command::new("onchainos")
+    let output = tokio::process::Command::new(onchainos_bin())
         .args(["wallet", "balance", "--chain", chain])
         .output()
         .await;

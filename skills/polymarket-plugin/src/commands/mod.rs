@@ -1,5 +1,6 @@
 pub mod balance;
 pub mod buy;
+pub mod quickstart;
 pub mod cancel;
 pub mod check_access;
 pub mod create_readonly_key;

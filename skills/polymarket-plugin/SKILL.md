@@ -158,7 +158,7 @@ fi
 
 When a user signals they are **new or just installed** this plugin — e.g. "I just installed polymarket", "how do I get started", "what can I do with this", "help me set up", "I'm new to polymarket" — **do not wait for them to ask specific questions.** Proactively walk them through the Quickstart in order, one step at a time, waiting for confirmation before proceeding to the next:
 
-1. **Check wallet** — run `onchainos wallet addresses --chain 137`. If no address, direct them to connect via `onchainos wallet login`. Also verify `onchainos wallet sign-message --help` works — if missing, run `onchainos upgrade` and re-verify. Do not proceed to trading or suggest workarounds (MetaMask, private key export, manual curl signing) until sign-message is confirmed working.
+1. **Check wallet** — run `onchainos wallet addresses --chain 137`. If no address or if the binary returns an error mentioning "session", "login required", "unauthenticated", or "unauthorized" — the session has expired. Follow the **Session Recovery** steps below before proceeding.
 2. **Check access** — run `polymarket-plugin check-access`. If `accessible: false`, stop and show the warning. Do not proceed to funding.
 3. **Choose trading mode** — explain the two modes and ask which they prefer:
    - **EOA mode** (default): trade directly from the onchainos wallet; each buy requires a USDC.e `approve` tx (POL gas, typically < $0.01)
@@ -168,6 +168,27 @@ When a user signals they are **new or just installed** this plugin — e.g. "I j
 6. **Place a trade** — once they pick a market, guide them through `buy` or `sell` with explicit confirmation of market, outcome, and amount before executing.
 
 Do not dump all steps at once. Guide conversationally — confirm each step before moving on.
+
+---
+
+## Session Recovery
+
+If any command fails with a message containing "session has expired", "not connected", "login required", or "unauthenticated", the onchainos session needs to be renewed:
+
+**Step 1** — Re-login to onchainos (in a terminal or using `!` in this chat):
+```bash
+! onchainos wallet login your@email.com
+```
+Complete the OTP prompt in the terminal, then confirm login succeeded.
+
+**Step 2** — Clear stale Polymarket credentials (cached credentials bound to the old session):
+```bash
+! rm -f ~/.config/polymarket-plugin/creds.json
+```
+
+**Step 3** — Retry the original command. New credentials will be derived automatically on the next `buy`, `sell`, or `cancel`.
+
+> Note: the `!` prefix runs a command directly in the Claude Code terminal session, so the output is visible in this chat. Use it for interactive login flows.
 
 ---
 
