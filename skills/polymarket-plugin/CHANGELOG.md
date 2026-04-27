@@ -1,5 +1,13 @@
 # Polymarket Plugin Changelog
 
+### v0.5.1 (2026-04-27) — V2 cutover resilience
+
+- **fix**: `buy.rs` POLY_PROXY V2 allowance check now reads on-chain pUSD allowance (`get_pusd_allowance`) instead of CLOB `/balance-allowance`, which hard-codes `signature_type=0` and scopes the lookup to the EOA address. The bug caused a redundant `proxy_pusd_approve` to fire on every V2 buy after setup-proxy, wasting ~0.01 POL per trade. Source of truth is now consistent with `setup-proxy`.
+- **fix**: `get_clob_version` now returns `Result<u8>` and bails with a retry hint on network/parse failure, instead of silently defaulting to V1. Prevents `buy`/`sell`/`redeem`/`rfq` from routing V2-era orders through the V1 path during the cutover hour, which would produce confusing 404/405 responses from the upgraded server. `balance` softly degrades to `clob_version: "unknown"` and continues.
+- **feat**: `buy.rs` pre-flight POL gas check for POLY_PROXY V2: when a wrap or first-time V2 approve is required, ensure EOA has ≥ 0.05 POL and bail with a clear error otherwise — so users aren't stuck mid-flow at first V2 trade.
+- **feat**: `balance` output now includes a top-level `clob_version` field (`V1` / `V2` / `unknown`). Lets users confirm at a glance which exchange path their next trade will hit.
+- **docs**: SKILL.md "Overview" section adds a "What users see at cutover" subsection covering: zero-action cutover, the 0.05 POL requirement for first V2 trade, version visibility via `balance`, and `/version`-failure retry semantics.
+
 ### v0.5.0 (2026-04-21) — pUSD collateral migration + CLOB v2 completion
 
 - **feat (breaking-compatible)**: Full CLOB v2 support. Plugin auto-detects the active CLOB version via `GET /version` and branches on `OrderVersion::V1` vs `V2`. All new orders use v2 EIP-712 signing: domain version `"2"`, new exchange contracts (`CTF_EXCHANGE_V2 = 0xE111...`, `NEG_RISK_CTF_EXCHANGE_V2 = 0xe222...`), updated order struct (removed `taker`/`nonce`/`feeRateBps`; added `timestamp_ms`/`metadata`/`builder`). V1 orders placed before the upgrade remain placeable if the CLOB reports version 1 — no forced migration for existing users.

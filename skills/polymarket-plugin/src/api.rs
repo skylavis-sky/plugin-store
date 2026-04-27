@@ -568,18 +568,31 @@ pub async fn post_order<T: serde::Serialize>(
 
 /// Query the CLOB server for the active order version (1 or 2).
 ///
-/// Returns 1 as a safe fallback if the endpoint doesn't exist (pre-v2 server) or
-/// if the network call fails — so V1 signing is used until the server explicitly
-/// signals V2 readiness. The endpoint was added in the v2 migration.
-pub async fn get_clob_version(client: &Client) -> u8 {
+/// Detect the active CLOB version (V1 or V2) by querying GET /version.
+///
+/// Returns `Err` on network/parse failure rather than silently defaulting to V1.
+/// Reason: during the V1→V2 cutover (~2026-04-28 11:00 UTC) a transient probe
+/// failure could route a V2-era order through the V1 path, which the upgraded
+/// server will reject with a confusing 404/405. Bailing here gives the user a
+/// clear retry message instead.
+///
+/// Pre-v2 servers (before 2026-04-21) returned 404 on `/version`; that path is
+/// no longer reachable, so a missing endpoint now legitimately indicates a
+/// problem worth surfacing.
+pub async fn get_clob_version(client: &Client) -> Result<u8> {
     let url = format!("{}/version", Urls::CLOB);
-    match client.get(&url).send().await {
-        Ok(resp) => match resp.json::<serde_json::Value>().await {
-            Ok(v) => v["version"].as_u64().unwrap_or(1) as u8,
-            Err(_) => 1,
-        },
-        Err(_) => 1,
-    }
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| "failed to detect CLOB version (network error). \
+            Retry; if persistent, the server may be mid-cutover.")?;
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .with_context(|| "failed to parse /version response from CLOB. \
+            Retry; if persistent, the server may be mid-cutover.")?;
+    Ok(v["version"].as_u64().unwrap_or(1) as u8)
 }
 
 /// Fetch open orders for the authenticated user.
