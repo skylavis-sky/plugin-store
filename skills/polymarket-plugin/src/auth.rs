@@ -279,15 +279,38 @@ pub async fn ensure_credentials(client: &Client, wallet_addr: &str) -> Result<Cr
         Err(_) => create_api_key(client, wallet_addr, 0).await?,
     };
 
-    // Auto-detect trading mode based on whether a proxy wallet exists.
-    // The API key response already includes proxyWallet if set; fall back to /profile.
+    // Auto-detect trading mode based on whether a proxy or deposit wallet exists.
+    // Priority: API key response proxyWallet field → /profile API → on-chain factory check.
+    // The /profile API is unreliable in CLOB V2 and may return empty — always fall back to on-chain.
     if creds.proxy_wallet.is_none() {
+        // Try /profile API first (fast, no RPC needed)
         if let Ok(Some(proxy)) = crate::api::get_proxy_wallet(client, wallet_addr).await {
             creds.proxy_wallet = Some(proxy);
         }
+        // Fallback: check on-chain via proxy factory eth_call (reliable even when /profile is down)
+        if creds.proxy_wallet.is_none() {
+            if let Some((proxy_addr, exists)) = crate::onchainos::get_existing_proxy(wallet_addr).await.ok().flatten() {
+                if exists {
+                    creds.proxy_wallet = Some(proxy_addr);
+                }
+            }
+        }
     }
 
-    creds.mode = if creds.proxy_wallet.is_some() {
+    // Check for deposit wallet on-chain (only if no proxy found — deposit wallet is for new users)
+    if creds.proxy_wallet.is_none() && creds.deposit_wallet.is_none() {
+        if let Some(dw) = crate::onchainos::get_existing_deposit_wallet(wallet_addr).await {
+            creds.deposit_wallet = Some(dw);
+        }
+    }
+
+    creds.mode = if creds.deposit_wallet.is_some() {
+        eprintln!(
+            "[polymarket] Deposit wallet detected: {}. Using DEPOSIT_WALLET mode (gasless, POLY_1271).",
+            creds.deposit_wallet.as_deref().unwrap_or("")
+        );
+        TradingMode::DepositWallet
+    } else if creds.proxy_wallet.is_some() {
         eprintln!(
             "[polymarket] Proxy wallet detected: {}. Using POLY_PROXY mode (no POL needed for trading).",
             creds.proxy_wallet.as_deref().unwrap_or("")
@@ -295,7 +318,7 @@ pub async fn ensure_credentials(client: &Client, wallet_addr: &str) -> Result<Cr
         TradingMode::PolyProxy
     } else {
         eprintln!(
-            "[polymarket] No proxy wallet found. Using EOA mode (requires POL for gas).\n\
+            "[polymarket] No proxy or deposit wallet found. Using EOA mode (requires POL for gas).\n\
              Tip: run `polymarket setup-proxy` to create a proxy wallet and switch to gasless trading."
         );
         TradingMode::Eoa
