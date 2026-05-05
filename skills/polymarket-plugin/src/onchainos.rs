@@ -981,6 +981,149 @@ pub async fn get_ctf_balance(owner: &str, token_id_decimal: &str) -> Result<u128
     Ok(u128::from_str_radix(hex, 16).unwrap_or(u128::MAX))
 }
 
+/// Variant of `get_ctf_balance` that takes the position ID as a 64-char hex string
+/// instead of decimal — useful when the position ID is computed via the on-chain
+/// `getPositionId` view function (which returns hex).
+pub async fn get_ctf_balance_hex(owner: &str, position_id_hex: &str) -> Result<u128> {
+    use crate::config::{Contracts, Urls};
+    let pid = position_id_hex.trim_start_matches("0x");
+    if pid.len() != 64 {
+        anyhow::bail!("position_id_hex must be 64 hex chars, got {}", pid.len());
+    }
+    let data = format!("0x00fdd58e{}{}", pad_address(owner), pid);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{ "to": Contracts::CTF, "data": data }, "latest"],
+        "id": 1
+    });
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(Urls::polygon_rpc())
+        .json(&body)
+        .send()
+        .await
+        .context("Polygon RPC request failed")?
+        .json()
+        .await
+        .context("parsing CTF balanceOf response")?;
+    if let Some(err) = v.get("error") {
+        anyhow::bail!("Polygon RPC error in CTF balanceOf (hex): {}", err);
+    }
+    let hex = v["result"].as_str().unwrap_or("0x").trim_start_matches("0x");
+    if hex.is_empty() || hex.chars().all(|c| c == '0') {
+        return Ok(0);
+    }
+    Ok(u128::from_str_radix(hex, 16).unwrap_or(u128::MAX))
+}
+
+/// On-chain `CTF.getCollectionId(parentCollectionId, conditionId, indexSet)`.
+///
+/// CTF's collectionId computation uses BN254 elliptic-curve point addition
+/// internally (via hashToCurve), so it cannot be replicated locally without
+/// pulling in elliptic-curve dependencies — we delegate to the contract.
+///
+/// Returns the collectionId as a 64-char hex string (without 0x prefix).
+pub async fn ctf_get_collection_id_hex(
+    parent_collection_id_hex: &str,
+    condition_id_hex: &str,
+    index_set: u32,
+) -> Result<String> {
+    use sha3::{Digest, Keccak256};
+    use crate::config::{Contracts, Urls};
+
+    let selector = Keccak256::digest(b"getCollectionId(bytes32,bytes32,uint256)");
+    let selector_hex = hex::encode(&selector[..4]);
+
+    let parent_pad = format!(
+        "{:0>64}",
+        parent_collection_id_hex.trim_start_matches("0x")
+    );
+    let cond_pad = format!(
+        "{:0>64}",
+        condition_id_hex.trim_start_matches("0x")
+    );
+    let idx_pad = format!("{:064x}", index_set);
+    let data = format!("0x{}{}{}{}", selector_hex, parent_pad, cond_pad, idx_pad);
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{ "to": Contracts::CTF, "data": data }, "latest"],
+        "id": 1
+    });
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(Urls::polygon_rpc())
+        .json(&body)
+        .send()
+        .await
+        .context("Polygon RPC request failed (getCollectionId)")?
+        .json()
+        .await
+        .context("parsing getCollectionId response")?;
+    if let Some(err) = v.get("error") {
+        anyhow::bail!("Polygon RPC error in CTF.getCollectionId: {}", err);
+    }
+    let hex = v["result"].as_str().unwrap_or("0x").trim_start_matches("0x");
+    if hex.len() != 64 {
+        anyhow::bail!(
+            "getCollectionId returned unexpected length {} (expected 64): 0x{}",
+            hex.len(),
+            hex
+        );
+    }
+    Ok(hex.to_string())
+}
+
+/// On-chain `CTF.getPositionId(IERC20 collateralToken, bytes32 collectionId)`.
+///
+/// Returns the position ID as a 64-char hex string (without 0x prefix), suitable
+/// for direct use with `get_ctf_balance_hex`.
+pub async fn ctf_get_position_id_hex(
+    collateral_addr: &str,
+    collection_id_hex: &str,
+) -> Result<String> {
+    use sha3::{Digest, Keccak256};
+    use crate::config::{Contracts, Urls};
+
+    let selector = Keccak256::digest(b"getPositionId(address,bytes32)");
+    let selector_hex = hex::encode(&selector[..4]);
+
+    let collateral_pad = pad_address(collateral_addr);
+    let collection_pad = format!(
+        "{:0>64}",
+        collection_id_hex.trim_start_matches("0x")
+    );
+    let data = format!("0x{}{}{}", selector_hex, collateral_pad, collection_pad);
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{ "to": Contracts::CTF, "data": data }, "latest"],
+        "id": 1
+    });
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(Urls::polygon_rpc())
+        .json(&body)
+        .send()
+        .await
+        .context("Polygon RPC request failed (getPositionId)")?
+        .json()
+        .await
+        .context("parsing getPositionId response")?;
+    if let Some(err) = v.get("error") {
+        anyhow::bail!("Polygon RPC error in CTF.getPositionId: {}", err);
+    }
+    let hex = v["result"].as_str().unwrap_or("0x").trim_start_matches("0x");
+    if hex.len() != 64 {
+        anyhow::bail!(
+            "getPositionId returned unexpected length {} (expected 64): 0x{}",
+            hex.len(),
+            hex
+        );
+    }
+    Ok(hex.to_string())
+}
+
 /// ABI-encode NegRiskAdapter.redeemPositions(bytes32 conditionId, uint256[] amounts).
 ///
 /// `amounts` is indexed by outcome slot: amounts[0] = YES token balance, amounts[1] = NO token balance.

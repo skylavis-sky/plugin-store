@@ -3,11 +3,60 @@ use reqwest::Client;
 
 use crate::api::{get_clob_market, get_gamma_market_by_slug, get_positions};
 // load_credentials_for used via crate::config path below
+use crate::config::Contracts;
 use crate::onchainos::{
     ctf_redeem_positions, ctf_redeem_via_proxy, decimal_str_to_hex64, get_ctf_balance,
+    get_ctf_balance_hex, ctf_get_collection_id_hex, ctf_get_position_id_hex,
     get_existing_proxy, get_pol_balance, get_wallet_address, negrisk_redeem_positions,
     wait_for_tx_receipt_labeled,
 };
+
+/// Auto-detect which collateral (USDC.e or pUSD) the position uses.
+///
+/// Background: CTF.positionId = keccak256(collateralToken || collectionId).
+/// V1 markets use USDC.e; V2 (post-2026-04-28 cutover) use pUSD. Calling
+/// `redeemPositions` with the wrong collateral computes a positionId the
+/// wallet doesn't hold → CTF silently no-ops (no revert, no PayoutRedemption
+/// event, status=0x1, ~35k gas). This function probes both candidates by
+/// querying actual on-chain balances and returns the collateral that matches
+/// at least one wallet's holdings.
+///
+/// Probes USDC.e first (most pre-cutover positions), falls back to pUSD.
+async fn detect_collateral_for_position(
+    condition_id: &str,
+    candidate_wallets: &[&str],
+) -> Result<&'static str> {
+    // Binary CTF: indexSet 1 (Yes) and 2 (No) — the user's winning shares are
+    // in exactly one of them. parentCollectionId = bytes32(0) for top-level markets.
+    let parent_zero = format!("0x{}", "0".repeat(64));
+    let mut collection_ids = Vec::with_capacity(2);
+    for &index_set in &[1u32, 2u32] {
+        let cid_hex = ctf_get_collection_id_hex(&parent_zero, condition_id, index_set).await?;
+        collection_ids.push(cid_hex);
+    }
+
+    for collateral in [Contracts::USDC_E, Contracts::PUSD] {
+        for collection_id_hex in &collection_ids {
+            let position_id_hex =
+                ctf_get_position_id_hex(collateral, collection_id_hex).await?;
+            for &wallet in candidate_wallets {
+                let bal = get_ctf_balance_hex(wallet, &position_id_hex)
+                    .await
+                    .unwrap_or(0);
+                if bal > 0 {
+                    return Ok(collateral);
+                }
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "Could not detect collateral for conditionId {} — no CTF balance found for either USDC.e or pUSD across {} wallet(s). \
+         Possibilities: market not resolved, winning tokens already redeemed, or shares are in a wallet this plugin does not know about.",
+        condition_id,
+        candidate_wallets.len()
+    );
+}
 
 /// Per-redeem timeout (Polygon block time ~2s; a healthy tx mines in <30s).
 /// Kept short so batch redeem stays under typical subprocess timeouts.
@@ -441,7 +490,23 @@ pub async fn run(market_id: &str, dry_run: bool, strategy_id: Option<&str>) -> R
     }
 
     // Auto-detect collateral: V2 markets use pUSD, V1 use USDC.e.
-    let collateral_addr = crate::config::Contracts::PUSD;
+    // Hardcoding pUSD silently no-ops V1 redeems on chain (keccak256 mismatch
+    // → 0 burn, 0 payout, status=0x1, no event).
+    let mut wallets: Vec<&str> = vec![&eoa_addr];
+    if let Some(p) = proxy_addr.as_deref() { wallets.push(p); }
+    if let Some(d) = deposit_wallet_addr.as_deref() { wallets.push(d); }
+    let collateral_addr = match detect_collateral_for_position(&condition_id, &wallets).await {
+        Ok(c) => c,
+        Err(e) => {
+            println!("{}", super::error_response(&e, Some("redeem"), hint_opt));
+            return Ok(());
+        }
+    };
+    eprintln!(
+        "[polymarket]   Detected CTF collateral: {} ({})",
+        if collateral_addr == Contracts::PUSD { "pUSD" } else { "USDC.e" },
+        collateral_addr
+    );
 
     match redeem_one(&client, &condition_id, &question, neg_risk, &token_ids, &eoa_addr, proxy_addr.as_deref(), deposit_wallet_addr.as_deref(), collateral_addr).await {
         Ok(result) => {
@@ -603,7 +668,36 @@ pub async fn run_all(dry_run: bool, strategy_id: Option<&str>) -> Result<()> {
             Ok(m) => (m.neg_risk, m.tokens.into_iter().map(|t| t.token_id).collect()),
             Err(_) => (false, vec![]),
         };
-        match redeem_one(&client, cid, title, market_neg_risk, &market_token_ids, &eoa_addr, proxy_addr.as_deref(), deposit_wallet_addr.as_deref(), crate::config::Contracts::PUSD).await {
+
+        // Auto-detect collateral (USDC.e for V1, pUSD for V2). Hardcoding pUSD
+        // silently no-ops V1 redeems on chain — see detect_collateral_for_position.
+        let mut wallets: Vec<&str> = vec![&eoa_addr];
+        if let Some(p) = proxy_addr.as_deref() { wallets.push(p); }
+        if let Some(d) = deposit_wallet_addr.as_deref() { wallets.push(d); }
+        let collateral_addr = match detect_collateral_for_position(cid, &wallets).await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[polymarket] Collateral detection failed for {}: {:#}", cid, e);
+                let classified: serde_json::Value = serde_json::from_str(
+                    &super::error_response(&e, Some("redeem"), hint_opt),
+                ).unwrap_or_else(|_| serde_json::json!({ "error": e.to_string() }));
+                errors.push(serde_json::json!({
+                    "condition_id": cid,
+                    "title": title,
+                    "error": classified.get("error"),
+                    "error_code": "COLLATERAL_NOT_DETECTED",
+                    "suggestion": classified.get("suggestion"),
+                }));
+                continue;
+            }
+        };
+        eprintln!(
+            "[polymarket]   Detected collateral: {} ({})",
+            if collateral_addr == Contracts::PUSD { "pUSD (V2)" } else { "USDC.e (V1)" },
+            collateral_addr
+        );
+
+        match redeem_one(&client, cid, title, market_neg_risk, &market_token_ids, &eoa_addr, proxy_addr.as_deref(), deposit_wallet_addr.as_deref(), collateral_addr).await {
             Ok(r) => {
                 report_redeem(strategy_id, &eoa_addr, proxy_addr.as_deref(), cid, &r).await;
                 results.push(r);
