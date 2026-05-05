@@ -92,6 +92,7 @@ async fn resolve_market(client: &Client, market_id: &str) -> Result<(String, boo
 struct Redeemability {
     eoa: bool,
     proxy: bool,
+    deposit_wallet: bool,
 }
 
 async fn check_redeemability(
@@ -99,6 +100,7 @@ async fn check_redeemability(
     condition_id: &str,
     eoa_addr: &str,
     proxy_addr: Option<&str>,
+    deposit_wallet_addr: Option<&str>,
 ) -> Redeemability {
     let cid_hex = condition_id.trim_start_matches("0x");
     let cid_display = format!("0x{}", cid_hex);
@@ -120,7 +122,16 @@ async fn check_redeemability(
         false
     };
 
-    Redeemability { eoa, proxy }
+    let deposit_wallet = if let Some(dw) = deposit_wallet_addr {
+        let positions = get_positions(client, dw).await.unwrap_or_default();
+        positions
+            .iter()
+            .any(|p| matches(p.condition_id.as_deref()) && p.redeemable)
+    } else {
+        false
+    };
+
+    Redeemability { eoa, proxy, deposit_wallet }
 }
 
 /// Core redeem logic for a single condition_id.
@@ -139,16 +150,17 @@ async fn redeem_one(
     token_ids: &[String],
     eoa_addr: &str,
     proxy_addr: Option<&str>,
+    deposit_wallet_addr: Option<&str>,
     collateral_addr: &str,
 ) -> Result<serde_json::Value> {
     let cid_hex = condition_id.trim_start_matches("0x");
     let cid_display = format!("0x{}", cid_hex);
 
-    let r = check_redeemability(client, condition_id, eoa_addr, proxy_addr).await;
+    let r = check_redeemability(client, condition_id, eoa_addr, proxy_addr, deposit_wallet_addr).await;
 
-    if !r.eoa && !r.proxy {
+    if !r.eoa && !r.proxy && !r.deposit_wallet {
         return Err(anyhow!(
-            "No redeemable positions found for {} on EOA ({}) {}. \
+            "No redeemable positions found for {} on EOA ({}) {}{}. \
              Outcome tokens are held in a wallet this plugin does not know about — \
              if you traded in POLY_PROXY mode, run `setup-proxy` first so the plugin \
              can look up the proxy address.",
@@ -156,7 +168,10 @@ async fn redeem_one(
             eoa_addr,
             proxy_addr
                 .map(|p| format!("or proxy ({})", p))
-                .unwrap_or_else(|| "(no proxy configured)".into())
+                .unwrap_or_else(|| "(no proxy configured)".into()),
+            deposit_wallet_addr
+                .map(|d| format!(" or deposit wallet ({})", d))
+                .unwrap_or_default()
         ));
     }
 
@@ -259,8 +274,32 @@ async fn redeem_one(
             );
         }
 
+        if r.deposit_wallet {
+            let dw = deposit_wallet_addr.unwrap(); // safe: r.deposit_wallet implies Some
+            eprintln!(
+                "[polymarket] Deposit wallet holds winning tokens — submitting redeemPositions via relayer WALLET batch..."
+            );
+            // Fetch builder credentials for relayer auth.
+            let clob_creds = crate::auth::ensure_credentials(client, eoa_addr).await
+                .map_err(|e| anyhow::anyhow!("Could not load CLOB credentials for deposit wallet redeem: {}", e))?;
+            let builder = crate::api::get_builder_api_key(client, &clob_creds, eoa_addr).await
+                .map_err(|e| anyhow::anyhow!("Could not derive builder credentials for relayer: {}", e))?;
+            let tx = crate::onchainos::ctf_redeem_via_deposit_wallet(
+                condition_id, collateral_addr, dw, eoa_addr, &builder,
+            ).await?;
+            eprintln!(
+                "[polymarket] Deposit wallet redeem tx {} — waiting up to {}s for confirmation...",
+                tx, REDEEM_WAIT_SECS
+            );
+            wait_for_tx_receipt_labeled(&tx, REDEEM_WAIT_SECS, "Deposit wallet redeem").await?;
+            out["deposit_wallet_tx"] = serde_json::Value::String(tx);
+            out["deposit_wallet_note"] = serde_json::Value::String(
+                "redeemPositions confirmed via deposit wallet. pUSD transferred to deposit wallet.".into(),
+            );
+        }
+
         out["note"] = serde_json::Value::String(
-            "USDC.e transferred to the respective wallet(s).".into(),
+            "Collateral transferred to the respective wallet(s).".into(),
         );
     }
 
@@ -349,15 +388,19 @@ pub async fn run(market_id: &str, dry_run: bool, strategy_id: Option<&str>) -> R
     };
 
     let creds = load_credentials().unwrap_or_default();
-    let proxy_addr = creds.and_then(|c| c.proxy_wallet);
+    let proxy_addr = creds.as_ref().and_then(|c| c.proxy_wallet.clone());
+    let deposit_wallet_addr = creds.and_then(|c| c.deposit_wallet);
 
     // Best-effort: if no proxy in creds, check on-chain so error hints can cite the address.
     let discovered_proxy = discover_uncached_proxy(&eoa_addr, proxy_addr.as_deref()).await;
     let hint = proxy_hint(discovered_proxy.as_deref());
     let hint_opt = if hint.is_empty() { None } else { Some(hint.as_str()) };
 
+    // Deposit wallet mode is gasless (relayer-paid). EOA/proxy need POL.
+    let needs_pol = deposit_wallet_addr.is_none();
+
     if dry_run {
-        let r = check_redeemability(&client, &condition_id, &eoa_addr, proxy_addr.as_deref()).await;
+        let r = check_redeemability(&client, &condition_id, &eoa_addr, proxy_addr.as_deref(), deposit_wallet_addr.as_deref()).await;
         let action = if neg_risk {
             "NegRiskAdapter.redeemPositions"
         } else {
@@ -376,26 +419,31 @@ pub async fn run(market_id: &str, dry_run: bool, strategy_id: Option<&str>) -> R
                     "neg_risk": neg_risk,
                     "eoa_wallet": eoa_addr,
                     "proxy_wallet": proxy_addr,
+                    "deposit_wallet": deposit_wallet_addr,
                     "discovered_proxy": discovered_proxy,
                     "eoa_redeemable": r.eoa,
                     "proxy_redeemable": r.proxy,
+                    "deposit_wallet_redeemable": r.deposit_wallet,
                     "action": action,
                     "token_ids": token_ids,
-                    "note": "dry-run: will redeem from whichever wallet holds the winning tokens. \
-                             If both eoa_redeemable and proxy_redeemable are false, run `setup-proxy` first."
-
+                    "note": "dry-run: will redeem from whichever wallet holds the winning tokens."
                 }
             }))?
         );
         return Ok(());
     }
 
-    if let Err(e) = check_pol_budget(&eoa_addr, 1).await {
-        println!("{}", super::error_response(&e, Some("redeem"), hint_opt));
-        return Ok(());
+    if needs_pol {
+        if let Err(e) = check_pol_budget(&eoa_addr, 1).await {
+            println!("{}", super::error_response(&e, Some("redeem"), hint_opt));
+            return Ok(());
+        }
     }
 
-    match redeem_one(&client, &condition_id, &question, neg_risk, &token_ids, &eoa_addr, proxy_addr.as_deref(), crate::config::Contracts::USDC_E).await {
+    // Auto-detect collateral: V2 markets use pUSD, V1 use USDC.e.
+    let collateral_addr = crate::config::Contracts::PUSD;
+
+    match redeem_one(&client, &condition_id, &question, neg_risk, &token_ids, &eoa_addr, proxy_addr.as_deref(), deposit_wallet_addr.as_deref(), collateral_addr).await {
         Ok(result) => {
             report_redeem(strategy_id, &eoa_addr, proxy_addr.as_deref(), &condition_id, &result).await;
             println!(
@@ -426,7 +474,8 @@ pub async fn run_all(dry_run: bool, strategy_id: Option<&str>) -> Result<()> {
     };
 
     let creds = load_credentials().unwrap_or_default();
-    let proxy_addr = creds.and_then(|c| c.proxy_wallet);
+    let proxy_addr = creds.as_ref().and_then(|c| c.proxy_wallet.clone());
+    let deposit_wallet_addr = creds.and_then(|c| c.deposit_wallet);
 
     // Best-effort discovery: if creds has no proxy but one exists on-chain,
     // surface it in error hints so the user knows `setup-proxy` is the fix.
@@ -434,7 +483,7 @@ pub async fn run_all(dry_run: bool, strategy_id: Option<&str>) -> Result<()> {
     let hint = proxy_hint(discovered_proxy.as_deref());
     let hint_opt = if hint.is_empty() { None } else { Some(hint.as_str()) };
 
-    // Collect all unique redeemable condition_ids from both wallets.
+    // Collect all unique redeemable condition_ids from all wallets.
     let mut redeemable: Vec<(String, String)> = Vec::new(); // (condition_id, title)
 
     let eoa_positions = get_positions(&client, &eoa_addr).await.unwrap_or_default();
@@ -463,16 +512,34 @@ pub async fn run_all(dry_run: bool, strategy_id: Option<&str>) -> Result<()> {
         }
     }
 
+    if let Some(ref dw) = deposit_wallet_addr {
+        let dw_positions = get_positions(&client, dw).await.unwrap_or_default();
+        for p in &dw_positions {
+            if p.redeemable {
+                if let Some(cid) = &p.condition_id {
+                    let title = p.title.clone().unwrap_or_default();
+                    if !redeemable.iter().any(|(c, _)| c == cid) {
+                        redeemable.push((cid.clone(), title));
+                    }
+                }
+            }
+        }
+    }
+
     if redeemable.is_empty() {
         let e = anyhow!(
-            "No redeemable positions found on EOA ({}) {}. \
+            "No redeemable positions found on EOA ({}) {}{}. \
              If you traded in POLY_PROXY mode, run `setup-proxy` first so the plugin \
              can look up the proxy address.",
             eoa_addr,
             proxy_addr
                 .as_ref()
                 .map(|p| format!("or proxy ({})", p))
-                .unwrap_or_else(|| "(no proxy configured)".into())
+                .unwrap_or_else(|| "(no proxy configured)".into()),
+            deposit_wallet_addr
+                .as_ref()
+                .map(|d| format!(" or deposit wallet ({})", d))
+                .unwrap_or_default()
         );
         println!("{}", super::error_response(&e, Some("redeem"), hint_opt));
         return Ok(());
@@ -536,7 +603,7 @@ pub async fn run_all(dry_run: bool, strategy_id: Option<&str>) -> Result<()> {
             Ok(m) => (m.neg_risk, m.tokens.into_iter().map(|t| t.token_id).collect()),
             Err(_) => (false, vec![]),
         };
-        match redeem_one(&client, cid, title, market_neg_risk, &market_token_ids, &eoa_addr, proxy_addr.as_deref(), crate::config::Contracts::USDC_E).await {
+        match redeem_one(&client, cid, title, market_neg_risk, &market_token_ids, &eoa_addr, proxy_addr.as_deref(), deposit_wallet_addr.as_deref(), crate::config::Contracts::PUSD).await {
             Ok(r) => {
                 report_redeem(strategy_id, &eoa_addr, proxy_addr.as_deref(), cid, &r).await;
                 results.push(r);

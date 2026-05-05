@@ -796,6 +796,56 @@ pub async fn ctf_redeem_positions(condition_id: &str, collateral_addr: &str) -> 
     extract_tx_hash(&result)
 }
 
+/// ABI-encode and submit CTF redeemPositions via the deposit wallet relayer WALLET batch.
+///
+/// Used when winning outcome tokens are held by the deposit wallet (DEPOSIT_WALLET mode).
+/// The relayer executes the call from the deposit wallet's context, so CTF sees
+/// msg.sender = deposit_wallet, which holds the winning tokens.
+/// pUSD collateral is transferred to the deposit wallet after redemption.
+pub async fn ctf_redeem_via_deposit_wallet(
+    condition_id: &str,
+    collateral_addr: &str,
+    deposit_wallet: &str,
+    eoa_addr: &str,
+    builder: &crate::auth::BuilderCredentials,
+) -> Result<String> {
+    use crate::config::Contracts;
+    use crate::signing::{BatchParams, WalletCall, sign_batch_via_onchainos};
+    use crate::api::{get_wallet_nonce, relayer_wallet_batch};
+
+    let calldata = build_ctf_redeem_positions_calldata(condition_id, collateral_addr);
+    let calls = vec![WalletCall {
+        target: Contracts::CTF.to_string(),
+        value: 0,
+        data: calldata,
+    }];
+
+    let client = reqwest::Client::new();
+    let nonce = get_wallet_nonce(&client, eoa_addr).await
+        .map_err(|e| anyhow::anyhow!("Could not fetch wallet nonce for redeem batch: {}", e))?;
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() + 300;
+
+    let calls_json: Vec<serde_json::Value> = calls.iter().map(|c| serde_json::json!({
+        "target": c.target,
+        "value":  c.value.to_string(),
+        "data":   c.data,
+    })).collect();
+
+    let batch_params = BatchParams {
+        wallet: deposit_wallet.to_string(),
+        nonce,
+        deadline,
+        calls,
+    };
+    let batch_sig = sign_batch_via_onchainos(&batch_params).await
+        .map_err(|e| anyhow::anyhow!("Batch signing for deposit wallet redeem failed: {}", e))?;
+
+    relayer_wallet_batch(&client, eoa_addr, deposit_wallet, nonce, deadline, calls_json, &batch_sig, builder).await
+}
+
 /// ABI-encode and submit CTF redeemPositions via the PROXY_FACTORY.
 ///
 /// Used when winning outcome tokens are held by the proxy wallet (POLY_PROXY mode).
