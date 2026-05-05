@@ -7,7 +7,7 @@ use crate::api::{
     OrderRequest, OrderRequestV2,
 };
 use crate::auth::ensure_credentials;
-use crate::config::{OrderVersion, TradingMode};
+use crate::config::OrderVersion;
 use crate::onchainos::{get_wallet_address, get_pusd_balance, is_ctf_approved_for_all};
 use crate::series;
 use crate::signing::{sign_order_v2_via_onchainos, sign_order_v2_poly1271_via_onchainos, sign_order_via_onchainos, OrderParams,
@@ -224,8 +224,8 @@ async fn run_inner(
     let step = shares_per_step * SHARE_RAW;
 
     let max_maker_raw = (share_amount * 1_000_000.0).floor() as u128;
-    let maker_amount_raw = (max_maker_raw / step) * step;
-    let taker_amount_raw = price_ticks * maker_amount_raw / tick_scale;
+    let mut maker_amount_raw = (max_maker_raw / step) * step;
+    let mut taker_amount_raw = price_ticks * maker_amount_raw / tick_scale;
 
     // Guard: share amount too small to produce a valid order after GCD alignment.
     // This check fires BEFORE any approval tx is submitted.
@@ -445,20 +445,51 @@ async fn run_inner(
     // Sign and submit the order using the correct version's struct and exchange contract.
     let resp = match clob_version {
         OrderVersion::V2 => {
+            // V2 CLOB amount precision constraints for SELL orders:
+            // - maker (shares): max 5 decimal places → divisible by 10 in millionths (already guaranteed
+            //   by SHARE_RAW step, but enforce explicitly)
+            // - taker (USDC received): max 2 decimal places → divisible by 10000 in millionths
+            // For sell, rounding taker DOWN reduces USDC received slightly. Since the CLOB
+            // fills at the best bid (≥ our specified min price), reducing taker slightly below
+            // the best bid still results in a fill — we just receive slightly less than the raw bid.
+            const V2_USDC_STEP: u128 = 10_000;  // 0.01 USDC = 10000 raw
+            const V2_SHARE_STEP: u128 = 10;      // 0.00001 shares = 10 raw
+            maker_amount_raw = (maker_amount_raw / V2_SHARE_STEP) * V2_SHARE_STEP;
+            if taker_amount_raw % V2_USDC_STEP != 0 {
+                // Round down taker USDC to 2 decimal places
+                taker_amount_raw = (taker_amount_raw / V2_USDC_STEP) * V2_USDC_STEP;
+                if taker_amount_raw == 0 {
+                    anyhow::bail!(
+                        "Amount too small for V2 precision: price {:.4} \
+                         produces a USDC payout below $0.01. Try a larger amount.",
+                        limit_price
+                    );
+                }
+            }
+
             let timestamp_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
-            // DepositWallet: maker = signer = deposit_wallet_addr (not EOA).
-            let (order_maker, order_signer) = if effective_mode == TradingMode::DepositWallet {
-                (maker_addr.clone(), maker_addr.clone())
+
+            // For POLY_1271 (DepositWallet mode):
+            //   maker = signer = deposit_wallet.
+            //   CLOB maps api_key → deposit_wallet (via sync_balance_allowance_deposit_wallet).
+            //   For sig_type=3: CLOB validates order.signer == deposit_wallet_of(API_KEY).
+            //   deposit_wallet.isValidSignature(hash, ecdsa_sig_by_EOA) performs on-chain verification.
+            // For EOA/PolyProxy: signer = EOA.
+            let order_signer = if effective_mode == TradingMode::DepositWallet {
+                maker_addr.clone() // deposit_wallet = ERC-1271 verifier
             } else {
-                (maker_addr.clone(), signer_addr.clone())
+                signer_addr.clone()
             };
+            let order_creds = creds.clone();
+            let order_auth_addr = signer_addr.clone();
+
             let params = OrderParamsV2 {
                 salt,
-                maker: order_maker,
-                signer: order_signer,
+                maker: maker_addr.clone(),
+                signer: order_signer.clone(),
                 token_id: token_id.clone(),
                 maker_amount: maker_amount_raw as u64,
                 taker_amount: taker_amount_raw as u64,
@@ -476,7 +507,7 @@ async fn run_inner(
             let order_body = OrderBodyV2 {
                 salt,
                 maker: maker_addr.clone(),
-                signer: signer_addr.clone(),
+                signer: order_signer.clone(),
                 token_id: token_id.clone(),
                 maker_amount: maker_amount_raw.to_string(),
                 taker_amount: taker_amount_raw.to_string(),
@@ -489,12 +520,12 @@ async fn run_inner(
             };
             let order_req = OrderRequestV2 {
                 order: order_body,
-                owner: creds.api_key.clone(),
+                owner: order_creds.api_key.clone(),
                 order_type: effective_order_type.to_uppercase(),
                 post_only,
                 expiration: if expiration > 0 { expiration.to_string() } else { String::new() },
             };
-            post_order(&client, &signer_addr, &creds, &order_req).await?
+            post_order(&client, &order_auth_addr, &order_creds, &order_req).await?
         }
         OrderVersion::V1 => {
             let params = OrderParams {

@@ -8,8 +8,9 @@ use crate::api::{
 };
 use crate::auth::ensure_credentials;
 use crate::config::OrderVersion;
-use crate::onchainos::{approve_timeout_secs, get_pusd_balance, get_usdc_balance, get_wallet_address,
-    proxy_pusd_approve, proxy_wrap_usdc_to_pusd, wait_for_tx_receipt, wrap_usdc_to_pusd};
+use crate::onchainos::{approve_timeout_secs, deposit_wallet_wrap_usdc_to_pusd, get_pusd_balance,
+    get_usdc_balance, get_wallet_address, proxy_pusd_approve, proxy_wrap_usdc_to_pusd,
+    wait_for_tx_receipt, wrap_usdc_to_pusd};
 use crate::series;
 use crate::signing::{sign_order_v2_via_onchainos, sign_order_v2_poly1271_via_onchainos, sign_order_via_onchainos, OrderParams,
     OrderParamsV2, BYTES32_ZERO};
@@ -276,7 +277,7 @@ async fn run_inner(
         }
     }
 
-    let actual_usdc = maker_amount_raw as f64 / 1_000_000.0;
+    let mut actual_usdc = maker_amount_raw as f64 / 1_000_000.0;
     if round_up && actual_usdc > usdc_amount + 1e-6 {
         eprintln!(
             "[polymarket] Note: amount rounded up from ${:.6} to ${:.6} to satisfy \
@@ -452,12 +453,28 @@ async fn run_inner(
                         TradingMode::Eoa => {
                             wrap_usdc_to_pusd(balance_addr, shortfall as u128).await?
                         }
-                        TradingMode::PolyProxy | TradingMode::DepositWallet => {
+                        TradingMode::PolyProxy => {
                             proxy_wrap_usdc_to_pusd(balance_addr, shortfall as u128).await?
+                        }
+                        TradingMode::DepositWallet => {
+                            // Deposit wallets can't use PROXY_FACTORY — must wrap via
+                            // a signed relayer WALLET batch (msg.sender = deposit wallet = _to).
+                            eprintln!("[polymarket] Wrapping via WALLET batch (gasless)...");
+                            deposit_wallet_wrap_usdc_to_pusd(
+                                balance_addr,
+                                &signer_addr,
+                                shortfall as u128,
+                                &client,
+                                &creds,
+                            ).await?
                         }
                     };
                     eprintln!("[polymarket] Wrap tx: {}. Waiting for confirmation...", wrap_tx);
-                    wait_for_tx_receipt(&wrap_tx, approve_timeout_secs()).await?;
+                    // wait_for_tx_receipt already called inside deposit_wallet_wrap_usdc_to_pusd;
+                    // for EOA and PolyProxy modes, wait here.
+                    if effective_mode != TradingMode::DepositWallet {
+                        wait_for_tx_receipt(&wrap_tx, approve_timeout_secs()).await?;
+                    }
                     eprintln!("[polymarket] Wrapped. Proceeding with order.");
                 } else {
                     // Neither pUSD nor USDC.e is sufficient.
@@ -649,20 +666,70 @@ async fn run_inner(
     // Sign and submit the order using the correct version's struct and exchange contract.
     let resp = match clob_version {
         OrderVersion::V2 => {
+            // V2 CLOB amount precision constraints (enforced server-side):
+            // - maker (USDC): max 2 decimal places → divisible by 10000 in millionths
+            //   (0.01 USDC step; e.g. 994000 = 0.994 USDC → 3 decimal places → FAIL)
+            // - taker (shares): max 5 decimal places → divisible by 10 in millionths
+            // Prefer rounding UP maker (within user's budget) to avoid violating market minimums.
+            // Fall back to round-down if round-up exceeds the user's requested budget.
+            const V2_USDC_STEP: u128 = 10_000;  // 0.01 USDC = 10000 raw units
+            const V2_SHARE_STEP: u128 = 10;      // 0.00001 shares = 10 raw units
+            if maker_amount_raw % V2_USDC_STEP != 0 {
+                let rounded_up = ((maker_amount_raw + V2_USDC_STEP - 1) / V2_USDC_STEP) * V2_USDC_STEP;
+                let rounded_down = (maker_amount_raw / V2_USDC_STEP) * V2_USDC_STEP;
+                // Round up if it stays within the user's requested budget; otherwise round down.
+                maker_amount_raw = if (rounded_up as f64 / 1_000_000.0) <= usdc_amount + 1e-6 {
+                    rounded_up
+                } else {
+                    rounded_down
+                };
+                // Recompute taker from adjusted maker to maintain the price ratio.
+                taker_amount_raw = if price_ticks > 0 {
+                    let raw = maker_amount_raw * tick_scale / price_ticks;
+                    (raw / V2_SHARE_STEP) * V2_SHARE_STEP
+                } else {
+                    (taker_amount_raw / V2_SHARE_STEP) * V2_SHARE_STEP
+                };
+                if maker_amount_raw == 0 || taker_amount_raw == 0 {
+                    anyhow::bail!(
+                        "Amount too small for V2 precision: price {:.4} \
+                         requires buying in multiples of ~{:.2} USDC. \
+                         Try a larger amount.",
+                        limit_price,
+                        V2_USDC_STEP as f64 / (price_ticks.max(1) as f64 / tick_scale.max(1) as f64)
+                            / 1_000_000.0
+                    );
+                }
+                actual_usdc = maker_amount_raw as f64 / 1_000_000.0;
+            }
+            // Always round taker to 5 decimal place precision
+            taker_amount_raw = (taker_amount_raw / V2_SHARE_STEP) * V2_SHARE_STEP;
+
             let timestamp_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
-            // DepositWallet: maker = signer = deposit_wallet_addr (not EOA).
-            let (order_maker, order_signer) = if effective_mode == TradingMode::DepositWallet {
-                (maker_addr.clone(), maker_addr.clone())
+
+            // For POLY_1271 (DepositWallet mode):
+            //   maker = signer = deposit_wallet.
+            //   The CLOB maps the EOA's API key → deposit_wallet (via sync_balance_allowance_deposit_wallet),
+            //   so for sig_type=3 orders it validates: order.signer == deposit_wallet_of(API_KEY).
+            //   The actual ECDSA signature is by the EOA; the CLOB verifies via:
+            //     deposit_wallet.isValidSignature(order_hash, ecdsa_sig)
+            //   The deposit_wallet's isValidSignature checks if the EOA (owner) signed the hash → passes.
+            // For EOA/PolyProxy: signer = EOA.
+            let order_signer = if effective_mode == TradingMode::DepositWallet {
+                maker_addr.clone() // deposit_wallet = ERC-1271 verifier
             } else {
-                (maker_addr.clone(), signer_addr.clone())
+                signer_addr.clone()
             };
+            let order_creds = creds.clone();
+            let order_auth_addr = signer_addr.clone();
+
             let params = OrderParamsV2 {
                 salt,
-                maker: order_maker,
-                signer: order_signer,
+                maker: maker_addr.clone(),
+                signer: order_signer.clone(),
                 token_id: token_id.clone(),
                 maker_amount: maker_amount_raw as u64,
                 taker_amount: taker_amount_raw as u64,
@@ -680,7 +747,7 @@ async fn run_inner(
             let order_body = OrderBodyV2 {
                 salt,
                 maker: maker_addr.clone(),
-                signer: signer_addr.clone(),
+                signer: order_signer.clone(),
                 token_id: token_id.clone(),
                 maker_amount: maker_amount_raw.to_string(),
                 taker_amount: taker_amount_raw.to_string(),
@@ -694,12 +761,12 @@ async fn run_inner(
             // In V2, expiration moves to the outer wrapper (not part of the signed struct).
             let order_req = OrderRequestV2 {
                 order: order_body,
-                owner: creds.api_key.clone(),
+                owner: order_creds.api_key.clone(),
                 order_type: effective_order_type.to_uppercase(),
                 post_only,
                 expiration: if expiration > 0 { expiration.to_string() } else { String::new() },
             };
-            post_order(&client, &signer_addr, &creds, &order_req).await?
+            post_order(&client, &order_auth_addr, &order_creds, &order_req).await?
         }
         OrderVersion::V1 => {
             let params = OrderParams {
@@ -747,6 +814,43 @@ async fn run_inner(
 
     if resp.success != Some(true) {
         let msg = resp.error_msg.as_deref().unwrap_or("unknown error");
+        let msg_lower = msg.to_lowercase();
+
+        // ── Deposit wallet migration (V2 maker allowlist) ─────────────────────
+        // The V2 exchange requires a deposit wallet as the maker address.
+        // Existing EOA and PolyProxy users hitting this must run setup-deposit-wallet.
+        // Docs: https://docs.polymarket.com/trading/deposit-wallet-migration
+        if msg_lower.contains("maker address not allowed") || msg_lower.contains("deposit wallet") {
+            let pusd = crate::onchainos::get_pusd_balance(&maker_addr).await.unwrap_or(0.0);
+            let mode_str = match &effective_mode {
+                TradingMode::Eoa => "eoa",
+                TradingMode::PolyProxy => "proxy",
+                TradingMode::DepositWallet => "deposit_wallet",
+            };
+            let transfer_step = if pusd > 0.0 {
+                format!("3. Transfer {:.2} pUSD from {} to the deposit_wallet address", pusd, maker_addr)
+            } else {
+                "3. Fund the deposit wallet with pUSD (transfer from your source of funds)".to_string()
+            };
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "error": "Deposit wallet required — V2 exchange does not accept this maker address.",
+                "migration_required": true,
+                "migration": {
+                    "current_mode": mode_str,
+                    "trading_address": maker_addr,
+                    "pusd_at_trading_address": pusd,
+                    "next_steps": [
+                        "1. Run: polymarket setup-deposit-wallet",
+                        "2. Note the deposit_wallet address in the output",
+                        transfer_step,
+                        "4. Retry your order — plugin will automatically use deposit wallet mode"
+                    ]
+                }
+            })).unwrap_or_default());
+            return Ok(());
+        }
+
         if msg.to_uppercase().contains("INVALID_ORDER_MIN_SIZE") {
             bail!(
                 "Order rejected by CLOB: amount is below this market's minimum order size. \

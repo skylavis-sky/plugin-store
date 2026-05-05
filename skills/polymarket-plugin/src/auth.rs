@@ -70,6 +70,19 @@ pub fn l1_headers(address: &str, sig: &str, timestamp: u64, nonce: u64) -> Vec<(
     ]
 }
 
+/// Build L1 HTTP headers for ERC-1271 (deposit wallet) auth.
+/// Includes POLY_SIGNATURE_TYPE: 3 so the CLOB verifies via isValidSignature
+/// rather than ECDSA recovery against POLY_ADDRESS directly.
+pub fn l1_headers_erc1271(address: &str, sig: &str, timestamp: u64, nonce: u64) -> Vec<(String, String)> {
+    vec![
+        ("POLY_ADDRESS".to_string(), address.to_string()),
+        ("POLY_SIGNATURE".to_string(), sig.to_string()),
+        ("POLY_TIMESTAMP".to_string(), timestamp.to_string()),
+        ("POLY_NONCE".to_string(), nonce.to_string()),
+        ("POLY_SIGNATURE_TYPE".to_string(), "3".to_string()),
+    ]
+}
+
 // ─── L2: HMAC-SHA256 ─────────────────────────────────────────────────────────
 
 type HmacSha256 = Hmac<Sha256>;
@@ -233,6 +246,96 @@ pub async fn derive_api_key(client: &Client, wallet_addr: &str, nonce: u64) -> R
     };
     save_credentials(&creds)?;
     Ok(creds)
+}
+
+/// Create CLOB API keys for a deposit wallet using ERC-1271 (POLY_SIGNATURE_TYPE=3).
+///
+/// The active onchainos key (EOA) signs the ClobAuth EIP-712 message, but POLY_ADDRESS
+/// is set to the deposit wallet. The CLOB verifies via ERC-1271 by calling
+/// `deposit_wallet.isValidSignature(clob_auth_hash, ecdsa_sig)`.
+/// Returns credentials with signing_address = deposit_wallet.
+pub async fn create_api_key_erc1271(client: &Client, deposit_wallet: &str, nonce: u64) -> Result<Credentials> {
+    let (sig, timestamp, nonce_used) = sign_clob_auth_onchainos(deposit_wallet, nonce).await?;
+    let headers = l1_headers_erc1271(deposit_wallet, &sig, timestamp, nonce_used);
+
+    let mut req = client.post(format!("{}/auth/api-key", Urls::CLOB));
+    for (k, v) in &headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    let resp: serde_json::Value = req.send().await?.json().await?;
+
+    if let Some(err) = resp.get("error").and_then(|e| e.as_str()) {
+        anyhow::bail!("Polymarket /auth/api-key (ERC-1271) failed: {}\nResponse: {}", err, resp);
+    }
+
+    let api_key_resp: ApiKeyResponse = serde_json::from_value(resp.clone())
+        .with_context(|| format!("parsing api-key (ERC-1271) response: {}", resp))?;
+
+    let creds = Credentials {
+        api_key: api_key_resp.api_key,
+        secret: api_key_resp.secret,
+        passphrase: api_key_resp.passphrase,
+        nonce,
+        signing_address: deposit_wallet.to_string(),
+        proxy_wallet: None,
+        deposit_wallet: None,
+        mode: crate::config::TradingMode::DepositWallet,
+    };
+    save_credentials(&creds)?;
+    Ok(creds)
+}
+
+/// Derive existing CLOB API keys for a deposit wallet using ERC-1271.
+pub async fn derive_api_key_erc1271(client: &Client, deposit_wallet: &str, nonce: u64) -> Result<Credentials> {
+    let (sig, timestamp, _) = sign_clob_auth_onchainos(deposit_wallet, nonce).await?;
+    let headers = l1_headers_erc1271(deposit_wallet, &sig, timestamp, nonce);
+
+    let mut req = client.get(format!("{}/auth/derive-api-key", Urls::CLOB));
+    for (k, v) in &headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    let resp: serde_json::Value = req.send().await?.json().await?;
+
+    if resp.get("error").is_some() {
+        anyhow::bail!("derive-api-key (ERC-1271) rejected: {}", resp);
+    }
+
+    let api_key_resp: ApiKeyResponse = serde_json::from_value(resp.clone())
+        .with_context(|| format!("parsing derive-api-key (ERC-1271) response: {}", resp))?;
+
+    let creds = Credentials {
+        api_key: api_key_resp.api_key,
+        secret: api_key_resp.secret,
+        passphrase: api_key_resp.passphrase,
+        nonce,
+        signing_address: deposit_wallet.to_string(),
+        proxy_wallet: None,
+        deposit_wallet: None,
+        mode: crate::config::TradingMode::DepositWallet,
+    };
+    save_credentials(&creds)?;
+    Ok(creds)
+}
+
+/// Load or derive CLOB credentials for a deposit wallet (ERC-1271 / POLY_1271 mode).
+///
+/// The deposit wallet needs its own CLOB API key — separate from the EOA's key —
+/// because the CLOB validates order.signer == address_of(API_KEY), and for POLY_1271
+/// orders signer = maker = deposit_wallet_address.
+///
+/// The CLOB verifies the auth signature via ERC-1271 (POLY_SIGNATURE_TYPE: 3), so
+/// the active onchainos key (EOA) signs on behalf of the deposit wallet.
+pub async fn ensure_credentials_deposit_wallet(client: &Client, deposit_wallet: &str) -> Result<Credentials> {
+    if let Some(creds) = crate::config::load_credentials_for(deposit_wallet)? {
+        return Ok(creds);
+    }
+
+    eprintln!("[polymarket] Deriving ERC-1271 CLOB credentials for deposit wallet {}...", deposit_wallet);
+
+    match derive_api_key_erc1271(client, deposit_wallet, 0).await {
+        Ok(c) => Ok(c),
+        Err(_) => create_api_key_erc1271(client, deposit_wallet, 0).await,
+    }
 }
 
 /// Readonly API key — returned by `/auth/readonly-api-key` (CLOB v2).

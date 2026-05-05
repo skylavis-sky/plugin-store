@@ -12,11 +12,11 @@
 /// Existing EOA / PolyProxy users are NOT affected — this command is only needed once
 /// by new users. Existing users' creds.json already has a mode set and this command
 /// is never triggered automatically.
-use anyhow::{bail, Result};
+use anyhow::Result;
 use reqwest::Client;
 
 use crate::api::{get_builder_api_key, get_wallet_nonce, relayer_wallet_batch, relayer_wallet_create, sync_balance_allowance_deposit_wallet, WalletCreateResult};
-use crate::auth::ensure_credentials;
+use crate::auth::{ensure_credentials, ensure_credentials_deposit_wallet};
 use crate::config::{Contracts, TradingMode};
 use crate::onchainos::{get_wallet_address, get_pusd_balance};
 use crate::signing::{sign_batch_via_onchainos, BatchParams, WalletCall};
@@ -175,6 +175,21 @@ async fn run_inner(dry_run: bool) -> Result<()> {
     eprintln!("[polymarket] Syncing CLOB balance-allowance (signature_type=3)...");
     sync_balance_allowance_deposit_wallet(&client, &wallet_addr, &owner_addr, &clob_creds).await
         .unwrap_or_else(|e| eprintln!("[polymarket] Warning: balance sync failed ({}); retry with `polymarket balance`.", e));
+
+    // ── Step 5b: derive CLOB credentials for the deposit wallet address ───────
+    // For POLY_1271 orders, the CLOB validates: order.signer == address_of(API_KEY).
+    // Since the deposit wallet IS the order signer, it needs its own CLOB API key.
+    // We sign the credential challenge with the active onchainos key (EOA); the CLOB
+    // verifies via ERC-1271 by calling deposit_wallet.isValidSignature(hash, sig).
+    // POLY_SIGNATURE_TYPE: 3 in the auth headers enables this ERC-1271 verification path.
+    eprintln!("[polymarket] Deriving CLOB credentials for deposit wallet (ERC-1271 / POLY_SIGNATURE_TYPE=3)...");
+    match ensure_credentials_deposit_wallet(&client, &wallet_addr).await {
+        Ok(_) => eprintln!("[polymarket] Deposit wallet CLOB credentials registered."),
+        Err(e) => eprintln!(
+            "[polymarket] Warning: couldn't register deposit wallet with CLOB ({}). \
+             Will retry on first buy/sell.", e
+        ),
+    }
 
     // ── Step 6: save mode + wallet address ───────────────────────────────────
     let mut updated_creds = clob_creds;

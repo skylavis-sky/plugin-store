@@ -1637,8 +1637,8 @@ pub async fn sync_balance_allowance_deposit_wallet(
     }
     let resp = req.send().await.context("balance-allowance/update signature_type=3 failed")?;
     let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
         anyhow::bail!("balance-allowance/update returned {}: {}", status, body);
     }
     Ok(())

@@ -237,20 +237,216 @@ pub async fn sign_batch_via_onchainos(params: &BatchParams) -> Result<String> {
 
 /// Sign a V2 order for a deposit wallet (POLY_1271 / ERC-1271, signature_type=3).
 ///
-/// The order struct is identical to the standard V2 order, but:
-/// - `maker` and `signer` are both set to the deposit wallet address (not the EOA)
-/// - `signature_type` = 3 (POLY_1271)
-/// - The resulting ECDSA signature is validated on-chain via the deposit wallet's
-///   `isValidSignature` (ERC-1271). The CLOB passes the order hash and signature
-///   to the wallet contract for verification.
+/// POLY_1271 uses Solady's ERC-7739 TypedDataSign composite signature format.
+/// The deposit wallet's `isValidSignature` (Solady ERC-1271 + ERC-7739) requires:
 ///
-/// Note: Full ERC-7739 (TypedDataSign) wrapping may be required for replay protection.
-/// The current implementation produces a standard 65-byte EIP-712 signature over the
-/// V2 Order struct with the exchange as verifying contract. Verify against the live
-/// Polymarket CLOB with deposit wallets — if rejected, the wrapping layer needs to be
-/// added here using the TypedDataSign envelope (EIP-7739).
+/// Wire format (composite signature):
+///   [65 bytes: ECDSA sig by EOA over TypedDataSign digest]
+///   [32 bytes: app_domain_separator (CTF Exchange V2)]
+///   [32 bytes: contents_hash (Order struct hash, without domain prefix)]
+///   [N bytes: ORDER_TYPE_STRING as UTF-8]
+///   [2 bytes: len(ORDER_TYPE_STRING) big-endian]
+///
+/// The EOA signs:
+///   keccak256("\x19\x01" || CTF_Exchange_domain_sep || TypedDataSign_struct_hash)
+/// where TypedDataSign_struct_hash encodes (contents_hash, wallet_name, wallet_version,
+/// chainId, deposit_wallet_addr, salt=0) using the Solady POLY_1271 type string.
+///
+/// Verification flow (Solady ERC-7739 in deposit wallet):
+///   1. Decode trailer → (app_domain_sep, contents_hash, ORDER_TYPE_STRING)
+///   2. Check keccak256("\x19\x01" || app_domain_sep || contents_hash) == clob_passed_hash
+///   3. Reconstruct TypedDataSign_struct_hash using wallet's own domain + decoded type string
+///   4. Verify ecrecover(final_digest, 65_byte_sig) == owner EOA
 pub async fn sign_order_v2_poly1271_via_onchainos(order: &OrderParamsV2, neg_risk: bool) -> Result<String> {
-    // The signing payload is identical to the standard V2 order — only signature_type differs.
-    // POLY_1271 validation is handled by the CLOB calling isValidSignature on the deposit wallet.
-    sign_order_v2_via_onchainos(order, neg_risk).await
+    use crate::config::Contracts;
+    use sha3::{Digest, Keccak256};
+
+    let exchange = Contracts::exchange_for_v2(neg_risk);
+
+    // V2 order type string — must exactly match the on-chain ABI type hash
+    const ORDER_TYPE_STRING: &str = "Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)";
+
+    // ── Step 1: Sign via EIP-712 TypedDataSign JSON ───────────────────────────
+    // Domain: CTF Exchange V2 (the "app" domain — outer \x19\x01 separator)
+    // PrimaryType: TypedDataSign
+    // Message:
+    //   contents (Order): the actual order fields (hashed as nested struct by onchainos)
+    //   name/version/chainId/verifyingContract/salt: deposit wallet's own EIP-712 domain
+    //     (embedded inside the TypedDataSign struct for wallet-specific replay protection)
+    let typed_data_sign_json = serde_json::to_string(&serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"}
+            ],
+            "TypedDataSign": [
+                {"name": "contents", "type": "Order"},
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"},
+                {"name": "salt", "type": "bytes32"}
+            ],
+            "Order": [
+                {"name": "salt", "type": "uint256"},
+                {"name": "maker", "type": "address"},
+                {"name": "signer", "type": "address"},
+                {"name": "tokenId", "type": "uint256"},
+                {"name": "makerAmount", "type": "uint256"},
+                {"name": "takerAmount", "type": "uint256"},
+                {"name": "side", "type": "uint8"},
+                {"name": "signatureType", "type": "uint8"},
+                {"name": "timestamp", "type": "uint256"},
+                {"name": "metadata", "type": "bytes32"},
+                {"name": "builder", "type": "bytes32"}
+            ]
+        },
+        "primaryType": "TypedDataSign",
+        "domain": {
+            "name": "Polymarket CTF Exchange",
+            "version": "2",
+            "chainId": 137,
+            "verifyingContract": exchange
+        },
+        "message": {
+            "contents": {
+                "salt": order.salt.to_string(),
+                "maker": order.maker,
+                "signer": order.signer,
+                "tokenId": order.token_id,
+                "makerAmount": order.maker_amount.to_string(),
+                "takerAmount": order.taker_amount.to_string(),
+                "side": order.side,
+                "signatureType": order.signature_type,
+                "timestamp": order.timestamp_ms.to_string(),
+                "metadata": order.metadata,
+                "builder": order.builder
+            },
+            // Deposit wallet's own EIP-712 domain fields (Solady DepositWallet contract)
+            "name": "DepositWallet",
+            "version": "1",
+            "chainId": 137,
+            "verifyingContract": order.signer,  // deposit wallet address
+            "salt": BYTES32_ZERO
+        }
+    })).expect("TypedDataSign EIP-712 JSON serialization failed");
+
+    let ecdsa_sig_hex = crate::onchainos::sign_eip712(&typed_data_sign_json).await?;
+    let ecdsa_bytes = hex::decode(ecdsa_sig_hex.trim_start_matches("0x"))
+        .map_err(|e| anyhow::anyhow!("Failed to decode ERC-7739 ECDSA signature: {}", e))?;
+    if ecdsa_bytes.len() != 65 {
+        return Err(anyhow::anyhow!("Expected 65-byte ECDSA signature, got {} bytes", ecdsa_bytes.len()));
+    }
+
+    // ── Step 2: Compute app_domain_separator = CTF Exchange V2 domain separator ─
+    // = keccak256(abi.encode(DOMAIN_TYPE_HASH, name_hash, version_hash, chainId, verifyingContract))
+    // This must match what the CLOB computes when calling isValidSignature.
+    let domain_type_hash = Keccak256::digest(
+        b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+    );
+    let name_hash = Keccak256::digest(b"Polymarket CTF Exchange");
+    let version_hash = Keccak256::digest(b"2");
+    let exchange_addr_bytes = hex::decode(exchange.trim_start_matches("0x"))
+        .map_err(|e| anyhow::anyhow!("Invalid exchange address '{}': {}", exchange, e))?;
+
+    let mut domain_enc = vec![0u8; 5 * 32]; // 5 fields × 32 bytes
+    domain_enc[0..32].copy_from_slice(&domain_type_hash);
+    domain_enc[32..64].copy_from_slice(&name_hash);
+    domain_enc[64..96].copy_from_slice(&version_hash);
+    // chainId = 137 as uint256 (right-aligned in 32-byte slot)
+    domain_enc[124..128].copy_from_slice(&137u32.to_be_bytes());
+    // verifyingContract = exchange addr (20 bytes, right-aligned: bytes 128+12..128+32)
+    domain_enc[140..160].copy_from_slice(&exchange_addr_bytes);
+    let mut app_domain_sep = [0u8; 32];
+    app_domain_sep.copy_from_slice(&Keccak256::digest(&domain_enc));
+
+    // ── Step 3: Compute contents_hash = Order struct hash ─────────────────────
+    // = keccak256(abi.encode(ORDER_TYPE_HASH, salt, maker, signer, tokenId,
+    //             makerAmount, takerAmount, side, signatureType, timestamp, metadata, builder))
+    // Each field is ABI-encoded as a 32-byte word (addresses left-padded, uints right-aligned).
+    let order_type_hash = Keccak256::digest(ORDER_TYPE_STRING.as_bytes());
+
+    let maker_addr = hex::decode(order.maker.trim_start_matches("0x"))
+        .map_err(|e| anyhow::anyhow!("Invalid maker address: {}", e))?;
+    let signer_addr = hex::decode(order.signer.trim_start_matches("0x"))
+        .map_err(|e| anyhow::anyhow!("Invalid signer address: {}", e))?;
+    let token_id_bytes = decimal_to_u256_bytes(&order.token_id)
+        .map_err(|e| anyhow::anyhow!("Invalid tokenId '{}': {}", order.token_id, e))?;
+    let metadata_bytes = hex::decode(order.metadata.trim_start_matches("0x"))
+        .map_err(|e| anyhow::anyhow!("Invalid metadata: {}", e))?;
+    let builder_bytes_dec = hex::decode(order.builder.trim_start_matches("0x"))
+        .map_err(|e| anyhow::anyhow!("Invalid builder: {}", e))?;
+
+    let mut order_enc = vec![0u8; 12 * 32]; // 12 fields × 32 bytes
+
+    // Field 0 (bytes   0-31): ORDER_TYPE_HASH (bytes32)
+    order_enc[0..32].copy_from_slice(&order_type_hash);
+    // Field 1 (bytes  32-63): salt (uint256, u64 → right-aligned)
+    order_enc[56..64].copy_from_slice(&order.salt.to_be_bytes());
+    // Field 2 (bytes  64-95): maker (address → 12 zero bytes + 20 addr bytes)
+    order_enc[76..96].copy_from_slice(&maker_addr);
+    // Field 3 (bytes  96-127): signer (address)
+    order_enc[108..128].copy_from_slice(&signer_addr);
+    // Field 4 (bytes 128-159): tokenId (uint256, full 32 bytes)
+    order_enc[128..160].copy_from_slice(&token_id_bytes);
+    // Field 5 (bytes 160-191): makerAmount (uint256, u64 → right-aligned)
+    order_enc[184..192].copy_from_slice(&order.maker_amount.to_be_bytes());
+    // Field 6 (bytes 192-223): takerAmount (uint256, u64 → right-aligned)
+    order_enc[216..224].copy_from_slice(&order.taker_amount.to_be_bytes());
+    // Field 7 (bytes 224-255): side (uint8 → right-aligned)
+    order_enc[255] = order.side;
+    // Field 8 (bytes 256-287): signatureType (uint8 → right-aligned)
+    order_enc[287] = order.signature_type;
+    // Field 9 (bytes 288-319): timestamp (uint256, u64 → right-aligned)
+    order_enc[312..320].copy_from_slice(&order.timestamp_ms.to_be_bytes());
+    // Field 10 (bytes 320-351): metadata (bytes32)
+    order_enc[320..352].copy_from_slice(&metadata_bytes);
+    // Field 11 (bytes 352-383): builder (bytes32)
+    order_enc[352..384].copy_from_slice(&builder_bytes_dec);
+
+    let mut contents_hash = [0u8; 32];
+    contents_hash.copy_from_slice(&Keccak256::digest(&order_enc));
+
+    // ── Step 4: Assemble Solady ERC-7739 composite signature wire format ───────
+    // [65 bytes: ECDSA sig] || [32 bytes: app_domain_sep] || [32 bytes: contents_hash]
+    // || [N bytes: ORDER_TYPE_STRING as UTF-8] || [2 bytes: len(ORDER_TYPE_STRING) big-endian]
+    //
+    // Solady's isValidSignature decodes this trailer to reconstruct and verify the hash,
+    // then checks the 65-byte ECDSA sig against the TypedDataSign digest.
+    let order_type_str_bytes = ORDER_TYPE_STRING.as_bytes();
+    let order_type_str_len = order_type_str_bytes.len() as u16;
+
+    let mut composite = Vec::with_capacity(65 + 32 + 32 + order_type_str_bytes.len() + 2);
+    composite.extend_from_slice(&ecdsa_bytes);
+    composite.extend_from_slice(&app_domain_sep);
+    composite.extend_from_slice(&contents_hash);
+    composite.extend_from_slice(order_type_str_bytes);
+    composite.extend_from_slice(&order_type_str_len.to_be_bytes());
+
+    Ok(format!("0x{}", hex::encode(&composite)))
+}
+
+/// Convert a decimal string to a 32-byte big-endian U256 array.
+/// Used for tokenId encoding in EIP-712 ABI encoding (Polymarket token IDs exceed u128).
+fn decimal_to_u256_bytes(s: &str) -> Result<[u8; 32]> {
+    let mut result = [0u8; 32];
+    for &byte in s.as_bytes() {
+        if byte < b'0' || byte > b'9' {
+            return Err(anyhow::anyhow!("Invalid decimal digit '{}' in '{}'", byte as char, s));
+        }
+        let digit = byte - b'0';
+        // result = result * 10 + digit (big-endian multi-precision arithmetic)
+        let mut carry: u32 = digit as u32;
+        for i in (0..32).rev() {
+            let val: u32 = result[i] as u32 * 10 + carry;
+            result[i] = val as u8;
+            carry = val >> 8;
+        }
+        if carry != 0 {
+            return Err(anyhow::anyhow!("Value '{}' too large for 256-bit integer", s));
+        }
+    }
+    Ok(result)
 }

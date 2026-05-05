@@ -1159,6 +1159,82 @@ pub async fn proxy_wrap_usdc_to_pusd(proxy_addr: &str, amount: u128) -> Result<S
     extract_tx_hash(&result)
 }
 
+/// Wrap USDC.e → pUSD for a deposit wallet via Polymarket relayer WALLET batch.
+///
+/// COLLATERAL_ONRAMP.wrap() requires `_to == msg.sender`, so the deposit wallet must
+/// call the onramp from its own context. This is done via a signed WALLET batch submitted
+/// to the Polymarket relayer — fully gasless (same mechanism as the approval batch in
+/// `setup-deposit-wallet`).
+///
+/// Batch calls:
+///   1. USDC_E.approve(COLLATERAL_ONRAMP, amount)
+///   2. COLLATERAL_ONRAMP.wrap(USDC_E, wallet_addr, amount)  ← msg.sender = wallet_addr = _to ✓
+///
+/// Returns the approval batch tx hash after on-chain confirmation.
+pub async fn deposit_wallet_wrap_usdc_to_pusd(
+    wallet_addr: &str,
+    owner_addr: &str,
+    amount: u128,
+    client: &reqwest::Client,
+    creds: &crate::config::Credentials,
+) -> Result<String> {
+    use sha3::{Digest, Keccak256};
+    use crate::api::{get_builder_api_key, get_wallet_nonce, relayer_wallet_batch};
+    use crate::config::Contracts;
+    use crate::signing::{sign_batch_via_onchainos, BatchParams, WalletCall};
+
+    // Fetch builder credentials (needed for relayer WALLET batch auth).
+    let builder = get_builder_api_key(client, creds, owner_addr).await
+        .map_err(|e| anyhow::anyhow!("Could not get builder credentials for wrap: {}", e))?;
+
+    // Call 1: USDC.e.approve(COLLATERAL_ONRAMP, amount)
+    let approve_sel = hex::encode(&Keccak256::digest(b"approve(address,uint256)")[..4]);
+    let approve_data = format!(
+        "0x{}{}{}",
+        approve_sel,
+        pad_address(Contracts::COLLATERAL_ONRAMP),
+        pad_u256(amount),
+    );
+
+    // Call 2: COLLATERAL_ONRAMP.wrap(USDC_E, wallet_addr, amount)
+    let wrap_sel = hex::encode(&Keccak256::digest(b"wrap(address,address,uint256)")[..4]);
+    let wrap_data = format!(
+        "0x{}{}{}{}",
+        wrap_sel,
+        pad_address(Contracts::USDC_E),
+        pad_address(wallet_addr),
+        pad_u256(amount),
+    );
+
+    let calls = vec![
+        WalletCall { target: Contracts::USDC_E.to_string(),            value: 0, data: approve_data },
+        WalletCall { target: Contracts::COLLATERAL_ONRAMP.to_string(), value: 0, data: wrap_data   },
+    ];
+
+    let nonce = get_wallet_nonce(client, owner_addr).await
+        .map_err(|e| anyhow::anyhow!("Could not fetch wallet nonce for wrap: {}", e))?;
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() + 300;
+
+    let calls_json: Vec<serde_json::Value> = calls.iter().map(|c| serde_json::json!({
+        "target": c.target,
+        "value":  c.value.to_string(),
+        "data":   c.data,
+    })).collect();
+
+    let batch_params = BatchParams { wallet: wallet_addr.to_string(), nonce, deadline, calls };
+    let batch_sig = sign_batch_via_onchainos(&batch_params).await
+        .map_err(|e| anyhow::anyhow!("Batch signing failed for wrap: {}", e))?;
+
+    let tx = relayer_wallet_batch(client, owner_addr, wallet_addr, nonce, deadline, calls_json, &batch_sig, &builder).await
+        .map_err(|e| anyhow::anyhow!("Relayer WALLET batch for wrap failed: {}", e))?;
+
+    wait_for_tx_receipt(&tx, 120).await?;
+    Ok(tx)
+}
+
 /// Simulate a contract call via eth_call on Polygon. Returns Ok(()) if no revert.
 ///
 /// Use this as a pre-flight before `wallet_contract_call` to catch reverts that
