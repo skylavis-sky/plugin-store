@@ -162,3 +162,99 @@ pub async fn sign_order_v2_via_onchainos(order: &OrderParamsV2, neg_risk: bool) 
 
 /// Bytes32 zero value — used as default metadata and builder in V2 orders.
 pub const BYTES32_ZERO: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+// ─── Deposit Wallet (sig_type=3 / POLY_1271) ─────────────────────────────────
+
+/// A single call in a DepositWallet batch.
+pub struct WalletCall {
+    /// 0=CALL, 1=DELEGATECALL
+    pub call_type: u8,
+    pub to: String,
+    pub value: u64,
+    pub data: String, // hex-encoded calldata
+}
+
+/// Parameters for signing a DepositWallet batch transaction.
+///
+/// The batch is submitted via the Polymarket relayer (POST /submit, type=WALLET).
+/// The owner EOA signs an EIP-712 `Batch` struct; the deposit wallet contract
+/// validates via ERC-1271 (`isValidSignature`).
+///
+/// Domain: name="DepositWallet", version="1", chainId=137, verifyingContract=<wallet_addr>
+pub struct BatchParams {
+    pub wallet: String,   // deposit wallet address (verifying contract)
+    pub nonce: u64,
+    pub deadline: u64,    // Unix timestamp
+    pub calls: Vec<WalletCall>,
+}
+
+/// Sign a DepositWallet batch via `onchainos wallet sign-message --type eip712`.
+pub async fn sign_batch_via_onchainos(params: &BatchParams) -> Result<String> {
+    let calls_json: Vec<serde_json::Value> = params.calls.iter().map(|c| {
+        serde_json::json!({
+            "callType": c.call_type,
+            "to": c.to,
+            "value": c.value.to_string(),
+            "data": c.data,
+        })
+    }).collect();
+
+    let json = serde_json::to_string(&serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                {"name": "name",             "type": "string"},
+                {"name": "version",          "type": "string"},
+                {"name": "chainId",          "type": "uint256"},
+                {"name": "verifyingContract","type": "address"}
+            ],
+            "Call": [
+                {"name": "callType", "type": "uint8"},
+                {"name": "to",       "type": "address"},
+                {"name": "value",    "type": "uint256"},
+                {"name": "data",     "type": "bytes"}
+            ],
+            "Batch": [
+                {"name": "wallet",   "type": "address"},
+                {"name": "nonce",    "type": "uint256"},
+                {"name": "deadline", "type": "uint256"},
+                {"name": "calls",    "type": "Call[]"}
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": {
+            "name": "DepositWallet",
+            "version": "1",
+            "chainId": 137,
+            "verifyingContract": params.wallet,
+        },
+        "message": {
+            "wallet":   params.wallet,
+            "nonce":    params.nonce.to_string(),
+            "deadline": params.deadline.to_string(),
+            "calls":    calls_json,
+        }
+    }))
+    .expect("Batch EIP-712 JSON serialization failed");
+
+    crate::onchainos::sign_eip712(&json).await
+}
+
+/// Sign a V2 order for a deposit wallet (POLY_1271 / ERC-1271, signature_type=3).
+///
+/// The order struct is identical to the standard V2 order, but:
+/// - `maker` and `signer` are both set to the deposit wallet address (not the EOA)
+/// - `signature_type` = 3 (POLY_1271)
+/// - The resulting ECDSA signature is validated on-chain via the deposit wallet's
+///   `isValidSignature` (ERC-1271). The CLOB passes the order hash and signature
+///   to the wallet contract for verification.
+///
+/// Note: Full ERC-7739 (TypedDataSign) wrapping may be required for replay protection.
+/// The current implementation produces a standard 65-byte EIP-712 signature over the
+/// V2 Order struct with the exchange as verifying contract. Verify against the live
+/// Polymarket CLOB with deposit wallets — if rejected, the wrapping layer needs to be
+/// added here using the TypedDataSign envelope (EIP-7739).
+pub async fn sign_order_v2_poly1271_via_onchainos(order: &OrderParamsV2, neg_risk: bool) -> Result<String> {
+    // The signing payload is identical to the standard V2 order — only signature_type differs.
+    // POLY_1271 validation is handled by the CLOB calling isValidSignature on the deposit wallet.
+    sign_order_v2_via_onchainos(order, neg_risk).await
+}

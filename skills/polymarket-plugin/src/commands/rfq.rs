@@ -149,6 +149,13 @@ async fn run_inner(
                 ))?.clone();
             (proxy, 1u8)
         }
+        TradingMode::DepositWallet => {
+            let dw = creds.deposit_wallet.as_ref()
+                .ok_or_else(|| anyhow::anyhow!(
+                    "DEPOSIT_WALLET mode requires a deposit wallet. Run `polymarket setup-deposit-wallet` first."
+                ))?.clone();
+            (dw, 3u8)
+        }
         TradingMode::Eoa => (signer_addr.clone(), 0u8),
     };
 

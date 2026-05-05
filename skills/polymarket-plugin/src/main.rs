@@ -210,6 +210,16 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Deploy a Polymarket deposit wallet and switch to DEPOSIT_WALLET (POLY_1271) trading mode.
+    /// New user path from v0.6.0: fully gasless, relayer-funded, signature_type=3.
+    /// Existing EOA/proxy users are unaffected — run this only on a fresh install.
+    #[command(name = "setup-deposit-wallet")]
+    SetupDepositWallet {
+        /// Preview the deployment without submitting any transaction
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Deposit tokens into the proxy wallet via Polygon direct transfer or bridge.
     /// Requires `setup-proxy` to have been run first.
     /// Use --list to see all supported chains and tokens.
@@ -246,10 +256,10 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Switch the default trading mode between EOA and POLY_PROXY.
+    /// Switch the default trading mode: eoa, proxy, or deposit-wallet.
     SwitchMode {
-        /// Mode to switch to: eoa or proxy
-        #[arg(long, value_parser = ["eoa", "proxy"])]
+        /// Mode to switch to: eoa, proxy, or deposit-wallet
+        #[arg(long, value_parser = ["eoa", "proxy", "deposit-wallet"])]
         mode: String,
     },
 
@@ -424,6 +434,9 @@ async fn main() {
         }
         Commands::SetupProxy { dry_run } => {
             commands::setup_proxy::run(dry_run).await
+        }
+        Commands::SetupDepositWallet { dry_run } => {
+            commands::setup_deposit_wallet::run(dry_run).await
         }
         Commands::Deposit { amount, chain, token, list, dry_run } => {
             commands::deposit::run(amount.as_deref(), &chain, &token, list, dry_run).await

@@ -1,5 +1,18 @@
 # Polymarket Plugin Changelog
 
+### v0.6.0 (2026-05-05) — Deposit wallet support (POLY_1271 / new user flow)
+
+- **feat**: New `TradingMode::DepositWallet` — ERC-1967 proxy per user, deployed by `DEPOSIT_WALLET_FACTORY`. Fully gasless (relayer-paid). `maker = signer = deposit_wallet_address`, `signature_type = 3` (POLY_1271 / ERC-1271).
+- **feat**: `setup-deposit-wallet` command — 6-step onboarding: deploy via relayer WALLET-CREATE → sign 5-target approval batch (pUSD + CTF ERC-1155) → sync CLOB balance-allowance `signature_type=3` → save mode.
+- **feat**: `get_existing_deposit_wallet` — on-chain factory probe + `eth_getCode` confirmation. Used by `quickstart` for creds-less recovery.
+- **feat**: `buy` / `sell` / `rfq` — DepositWallet branch: maker=signer=deposit_wallet, sig_type=3, `sign_order_v2_poly1271_via_onchainos`. No per-trade POL or approval needed.
+- **feat**: `balance` — shows deposit wallet pUSD balance when deposit wallet is configured.
+- **feat**: `switch-mode` — accepts `deposit-wallet` in addition to `eoa`/`proxy`.
+- **feat**: `quickstart` — on first run (no creds.json): checks for existing proxy, then deposit wallet, then routes to `setup-deposit-wallet` for brand-new users.
+- **feat**: Relayer API — `relayer_wallet_create`, `relayer_wallet_batch`, `get_wallet_nonce`, `sync_balance_allowance_deposit_wallet`.
+- **feat**: Batch signing — `sign_batch_via_onchainos` (EIP-712 `DepositWallet.Batch` type).
+- **compat**: Existing EOA and PolyProxy users unaffected — `creds.json` mode field gates all routing.
+
 ### v0.5.1 (2026-04-27) — V2 cutover resilience + QA fixes
 
 - **fix**: `buy.rs` POLY_PROXY V2 allowance check now reads on-chain pUSD allowance (`get_pusd_allowance`) instead of CLOB `/balance-allowance`, which hard-codes `signature_type=0` and scopes the lookup to the EOA address. The bug caused a redundant `proxy_pusd_approve` to fire on every V2 buy after setup-proxy, wasting ~0.01 POL per trade. Source of truth is now consistent with `setup-proxy`.

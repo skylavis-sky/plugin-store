@@ -1362,3 +1362,137 @@ pub async fn get_5m_market(client: &Client, slug: &str) -> Result<Option<FiveMin
         accepting_orders: m["acceptingOrders"].as_bool().unwrap_or(false),
     }))
 }
+
+// ─── Deposit Wallet — Relayer API ────────────────────────────────────────────
+
+/// Response from the relayer /submit endpoint.
+#[derive(Debug, serde::Deserialize)]
+pub struct RelayerSubmitResponse {
+    #[serde(rename = "transactionHash")]
+    pub transaction_hash: Option<String>,
+    #[serde(rename = "walletAddress")]
+    pub wallet_address: Option<String>,
+    pub status: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Response from GET /nonce for a deposit wallet.
+#[derive(Debug, serde::Deserialize)]
+pub struct WalletNonceResponse {
+    pub nonce: u64,
+}
+
+/// Deploy a new deposit wallet via the Polymarket relayer (WALLET-CREATE).
+/// Returns the deployed wallet address.
+pub async fn relayer_wallet_create(
+    client: &Client,
+    owner_addr: &str,
+    signature: &str,
+) -> Result<String> {
+    use crate::config::Contracts;
+    let url = format!("{}/submit", crate::config::Urls::RELAYER);
+    let body = serde_json::json!({
+        "type": "WALLET-CREATE",
+        "from": owner_addr,
+        "to":   Contracts::DEPOSIT_WALLET_FACTORY,
+        "signature": signature,
+    });
+    let resp: RelayerSubmitResponse = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("relayer WALLET-CREATE request failed")?
+        .json()
+        .await
+        .context("relayer WALLET-CREATE response parse failed")?;
+
+    if let Some(err) = resp.error.filter(|e| !e.is_empty()) {
+        anyhow::bail!("relayer WALLET-CREATE error: {}", err);
+    }
+    resp.wallet_address
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("relayer did not return wallet address after WALLET-CREATE"))
+}
+
+/// Submit a signed batch of calls via the Polymarket relayer (WALLET).
+pub async fn relayer_wallet_batch(
+    client: &Client,
+    wallet_addr: &str,
+    nonce: u64,
+    deadline: u64,
+    calls: Vec<serde_json::Value>,
+    signature: &str,
+) -> Result<String> {
+    let url = format!("{}/submit", crate::config::Urls::RELAYER);
+    let body = serde_json::json!({
+        "type": "WALLET",
+        "wallet": wallet_addr,
+        "nonce":  nonce,
+        "deadline": deadline,
+        "calls": calls,
+        "signature": signature,
+    });
+    let resp: RelayerSubmitResponse = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("relayer WALLET batch request failed")?
+        .json()
+        .await
+        .context("relayer WALLET batch response parse failed")?;
+
+    if let Some(err) = resp.error.filter(|e| !e.is_empty()) {
+        anyhow::bail!("relayer WALLET batch error: {}", err);
+    }
+    resp.transaction_hash
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("relayer WALLET batch returned no transaction hash"))
+}
+
+/// Fetch the current nonce for a deposit wallet from the relayer.
+pub async fn get_wallet_nonce(client: &Client, owner_addr: &str) -> Result<u64> {
+    let url = format!(
+        "{}/nonce?address={}&type=WALLET",
+        crate::config::Urls::RELAYER,
+        owner_addr
+    );
+    let resp: WalletNonceResponse = client
+        .get(&url)
+        .send()
+        .await
+        .context("relayer /nonce request failed")?
+        .json()
+        .await
+        .context("relayer /nonce response parse failed")?;
+    Ok(resp.nonce)
+}
+
+/// Sync pUSD balance and allowance with the CLOB for a deposit wallet (signature_type=3).
+/// Must be called after depositing pUSD or completing approval batches.
+pub async fn sync_balance_allowance_deposit_wallet(
+    client: &Client,
+    wallet_addr: &str,
+    signer_addr: &str,
+    creds: &Credentials,
+) -> Result<()> {
+    use crate::config::Urls;
+    let path = format!(
+        "/balance-allowance/update?asset_type=COLLATERAL&signature_type=3&address={}",
+        wallet_addr
+    );
+    let headers = crate::auth::l2_headers(signer_addr, &creds.api_key, &creds.secret, &creds.passphrase, "GET", "/balance-allowance/update", "")?;
+    let url = format!("{}{}", Urls::clob(), path);
+    let mut req = client.get(&url);
+    for (k, v) in &headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    let resp = req.send().await.context("balance-allowance/update signature_type=3 failed")?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("balance-allowance/update returned {}: {}", status, body);
+    }
+    Ok(())
+}

@@ -15,6 +15,10 @@ pub enum TradingMode {
     /// PolyProxy mode: a Polymarket proxy contract is the maker. No POL needed for trading;
     /// Polymarket's relayer covers gas. Requires USDC.e deposited into the proxy wallet.
     PolyProxy,
+    /// DepositWallet mode: a Polymarket ERC-1967 deposit wallet is the maker.
+    /// Gasless (relayer-paid). maker = signer = deposit_wallet_address.
+    /// Signature type 3 (POLY_1271 / ERC-1271). New users from v0.6.0 onwards.
+    DepositWallet,
 }
 
 /// Persisted API credentials derived via L1 (ClobAuth EIP-712) auth.
@@ -27,9 +31,13 @@ pub struct Credentials {
     /// Ethereum address of the onchainos wallet used to derive these credentials.
     #[serde(default)]
     pub signing_address: String,
-    /// Polymarket proxy wallet address (maker for orders).
+    /// Polymarket proxy wallet address (maker for PolyProxy orders).
     #[serde(default)]
     pub proxy_wallet: Option<String>,
+    /// Polymarket deposit wallet address (maker for DepositWallet orders).
+    /// ERC-1967 proxy deployed by DEPOSIT_WALLET_FACTORY. New users from v0.6.0.
+    #[serde(default)]
+    pub deposit_wallet: Option<String>,
     /// Active trading mode. Defaults to EOA if not set (backwards-compatible).
     #[serde(default)]
     pub mode: TradingMode,
@@ -131,6 +139,8 @@ impl Contracts {
     pub const COLLATERAL_ONRAMP: &'static str = "0x93070a847efEf7F70739046A929D47a521F5B8ee";
     pub const PROXY_FACTORY: &'static str = "0xaB45c5A4B0c941a2F231C04C3f49182e1A254052";
     pub const GNOSIS_SAFE_FACTORY: &'static str = "0xaacfeea03eb1561c4e67d661e40682bd20e3541b";
+    /// Deposit wallet factory — ERC-1967 proxies, one per user. Deployed via relayer WALLET-CREATE.
+    pub const DEPOSIT_WALLET_FACTORY: &'static str = "0x00000000000Fb5C9ADea0298D729A0CB3823Cc07";
     pub const UMA_ADAPTER: &'static str = "0x6A9D222616C90FcA5754cd1333cFD9b7fb6a4F74";
 
     /// Return the V1 exchange address for the given market type.
@@ -160,6 +170,7 @@ impl Urls {
     pub const GAMMA: &'static str = "https://gamma-api.polymarket.com";
     pub const DATA: &'static str = "https://data-api.polymarket.com";
     pub const BRIDGE: &'static str = "https://bridge.polymarket.com";
+    pub const RELAYER: &'static str = "https://relayer.polymarket.com";
     pub const POLYGON_RPC:  &'static str = "https://polygon.drpc.org";
     pub const ETHEREUM_RPC: &'static str = "https://ethereum.publicnode.com";
     pub const ARBITRUM_RPC: &'static str = "https://arbitrum.drpc.org";

@@ -160,6 +160,7 @@ pub async fn create_api_key(client: &Client, wallet_addr: &str, nonce: u64) -> R
         nonce,
         signing_address: wallet_addr.to_string(),
         proxy_wallet: api_key_resp.proxy_wallet,
+        deposit_wallet: None,
         mode: crate::config::TradingMode::default(),
     };
     save_credentials(&creds)?;
@@ -191,6 +192,7 @@ pub async fn derive_api_key(client: &Client, wallet_addr: &str, nonce: u64) -> R
         nonce,
         signing_address: wallet_addr.to_string(),
         proxy_wallet: api_key_resp.proxy_wallet,
+        deposit_wallet: None,
         mode: crate::config::TradingMode::default(),
     };
     save_credentials(&creds)?;
@@ -257,6 +259,7 @@ pub async fn ensure_credentials(client: &Client, wallet_addr: &str) -> Result<Cr
             nonce: 0,
             signing_address: wallet_addr.to_string(),
             proxy_wallet: None,
+            deposit_wallet: None,
             mode: TradingMode::Eoa,
         });
     }

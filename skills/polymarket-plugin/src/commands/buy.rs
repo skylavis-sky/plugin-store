@@ -11,7 +11,7 @@ use crate::config::OrderVersion;
 use crate::onchainos::{approve_timeout_secs, get_pusd_balance, get_usdc_balance, get_wallet_address,
     proxy_pusd_approve, proxy_wrap_usdc_to_pusd, wait_for_tx_receipt, wrap_usdc_to_pusd};
 use crate::series;
-use crate::signing::{sign_order_v2_via_onchainos, sign_order_via_onchainos, OrderParams,
+use crate::signing::{sign_order_v2_via_onchainos, sign_order_v2_poly1271_via_onchainos, sign_order_via_onchainos, OrderParams,
     OrderParamsV2, BYTES32_ZERO};
 
 
@@ -357,14 +357,23 @@ async fn run_inner(
             (proxy, 1u8)
         }
         TradingMode::Eoa => (signer_addr.clone(), 0u8),
+        TradingMode::DepositWallet => {
+            let dw = creds.deposit_wallet.as_ref().ok_or_else(|| anyhow::anyhow!(
+                "DEPOSIT_WALLET mode requires a deposit wallet. \
+                 Run `polymarket setup-deposit-wallet` to create one first."
+            ))?.clone();
+            eprintln!("[polymarket] Using DEPOSIT_WALLET mode — maker: {}", dw);
+            (dw, 3u8) // POLY_1271
+        }
     };
 
     let usdc_needed_raw = maker_amount_raw as u64;
 
-    // Determine which address holds the USDC.e for this order.
+    // Determine which address holds collateral for this order.
     let balance_addr = match &effective_mode {
-        TradingMode::PolyProxy => maker_addr.as_str(),
-        TradingMode::Eoa       => signer_addr.as_str(),
+        TradingMode::PolyProxy    => maker_addr.as_str(),
+        TradingMode::Eoa          => signer_addr.as_str(),
+        TradingMode::DepositWallet => maker_addr.as_str(), // deposit wallet holds pUSD
     };
 
     // Fetch CLOB version and on-chain balances (USDC.e + pUSD) in parallel.
@@ -443,7 +452,7 @@ async fn run_inner(
                         TradingMode::Eoa => {
                             wrap_usdc_to_pusd(balance_addr, shortfall as u128).await?
                         }
-                        TradingMode::PolyProxy => {
+                        TradingMode::PolyProxy | TradingMode::DepositWallet => {
                             proxy_wrap_usdc_to_pusd(balance_addr, shortfall as u128).await?
                         }
                     };
@@ -458,6 +467,11 @@ async fn run_inner(
                             "Run `polymarket deposit --amount {:.2}` to top up the proxy wallet, \
                              then the deposit will be auto-wrapped to pUSD on the next buy.",
                             total_needed_f64
+                        ),
+                        TradingMode::DepositWallet => format!(
+                            "Send ${:.2} pUSD to your deposit wallet ({}) and retry.",
+                            total_needed_f64,
+                            balance_addr
                         ),
                         TradingMode::Eoa => {
                             let proxy_hint = crate::config::load_credentials()
@@ -498,6 +512,10 @@ async fn run_inner(
                                 "Run `polymarket deposit --amount {:.2}` to top up the proxy wallet.",
                                 actual_usdc
                             ),
+                            TradingMode::DepositWallet => format!(
+                                "V1 USDC.e orders are not supported in DEPOSIT_WALLET mode (V2 pUSD only). \
+                                 Wait for CLOB V2 cutover or switch mode."
+                            ),
                             TradingMode::Eoa => {
                                 let proxy_hint = crate::config::load_credentials()
                                     .ok()
@@ -528,7 +546,7 @@ async fn run_inner(
         }
     }
 
-    // EOA mode: verify POL balance for gas. Proxy mode uses relayer — no POL needed.
+    // EOA mode: verify POL balance for gas. Proxy/DepositWallet use relayer — no POL needed.
     if effective_mode == TradingMode::Eoa {
         const MIN_POL: f64 = 0.01;
         match crate::onchainos::get_pol_balance(&signer_addr).await {
@@ -591,7 +609,7 @@ async fn run_inner(
             crate::onchainos::wait_for_tx_receipt(&tx_hash, approve_timeout_secs()).await?;
             eprintln!("[polymarket] Approval confirmed.");
         }
-    } else if effective_mode == TradingMode::PolyProxy && clob_version == OrderVersion::V2 {
+    } else if (effective_mode == TradingMode::PolyProxy || effective_mode == TradingMode::DepositWallet) && clob_version == OrderVersion::V2 {
         // POLY_PROXY + V2: query pUSD allowance on-chain (not via CLOB API).
         // The CLOB /balance-allowance endpoint hard-codes signature_type=0, which scopes
         // the lookup to the EOA address — but the V2 pUSD approvals live on the proxy
@@ -635,10 +653,16 @@ async fn run_inner(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
+            // DepositWallet: maker = signer = deposit_wallet_addr (not EOA).
+            let (order_maker, order_signer) = if effective_mode == TradingMode::DepositWallet {
+                (maker_addr.clone(), maker_addr.clone())
+            } else {
+                (maker_addr.clone(), signer_addr.clone())
+            };
             let params = OrderParamsV2 {
                 salt,
-                maker: maker_addr.clone(),
-                signer: signer_addr.clone(),
+                maker: order_maker,
+                signer: order_signer,
                 token_id: token_id.clone(),
                 maker_amount: maker_amount_raw as u64,
                 taker_amount: taker_amount_raw as u64,
@@ -648,7 +672,11 @@ async fn run_inner(
                 metadata: BYTES32_ZERO.to_string(),
                 builder: BYTES32_ZERO.to_string(),
             };
-            let signature = sign_order_v2_via_onchainos(&params, neg_risk).await?;
+            let signature = if effective_mode == TradingMode::DepositWallet {
+                sign_order_v2_poly1271_via_onchainos(&params, neg_risk).await?
+            } else {
+                sign_order_v2_via_onchainos(&params, neg_risk).await?
+            };
             let order_body = OrderBodyV2 {
                 salt,
                 maker: maker_addr.clone(),

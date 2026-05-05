@@ -1552,6 +1552,71 @@ pub async fn is_ctf_approved_for_all(owner: &str, operator: &str) -> Result<bool
     Ok(!hex.is_empty() && hex.trim_start_matches('0') == "1")
 }
 
+// ─── Deposit Wallet detection ─────────────────────────────────────────────────
+
+/// Check whether a deposit wallet has already been deployed for `eoa_addr`.
+///
+/// Calls `DEPOSIT_WALLET_FACTORY.getWallet(owner)` via eth_call and then verifies
+/// bytecode is present at the returned address.
+///
+/// Returns `Some(wallet_addr)` if deployed, `None` if not yet deployed or on any
+/// network error (safe default — callers re-route to `setup-deposit-wallet`).
+pub async fn get_existing_deposit_wallet(eoa_addr: &str) -> Option<String> {
+    use crate::config::{Contracts, Urls};
+    use sha3::{Digest, Keccak256};
+
+    let selector = Keccak256::digest(b"getWallet(address)");
+    let selector_hex = hex::encode(&selector[..4]);
+    let data = format!("0x{}{}", selector_hex, pad_address(eoa_addr));
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{"to": Contracts::DEPOSIT_WALLET_FACTORY, "data": data}, "latest"],
+        "id": 1
+    });
+
+    let client = reqwest::Client::new();
+    let v: serde_json::Value = client
+        .post(Urls::polygon_rpc())
+        .json(&body)
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    if v.get("error").is_some() { return None; }
+
+    // ABI-encoded address: 32 bytes, address is last 20 bytes (40 hex chars).
+    let hex_result = v["result"].as_str()?.trim_start_matches("0x");
+    if hex_result.len() < 64 { return None; }
+    let addr_hex = &hex_result[hex_result.len() - 40..];
+    if addr_hex.chars().all(|c| c == '0') { return None; } // zero = not deployed
+
+    let wallet_addr = format!("0x{}", addr_hex);
+
+    // Confirm bytecode exists at predicted address (not just a deterministic pre-image).
+    let code_v: serde_json::Value = client
+        .post(Urls::polygon_rpc())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "method": "eth_getCode",
+            "params": [&wallet_addr, "latest"], "id": 1
+        }))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    let code = code_v["result"].as_str().unwrap_or("0x");
+    if code == "0x" || code.is_empty() { return None; }
+
+    Some(wallet_addr)
+}
+
 // ─── Unit Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]

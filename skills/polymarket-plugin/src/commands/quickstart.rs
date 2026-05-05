@@ -41,26 +41,33 @@ async fn run_inner(args: QuickstartArgs) -> anyhow::Result<()> {
         &eoa[..std::cmp::min(10, eoa.len())]
     );
 
-    // 2. Read local creds — proxy_wallet is Some(addr) after `setup-proxy` has run.
-    //    If creds don't exist (fresh install or new machine), fall back to an on-chain
-    //    lookup so returning users aren't told "no funds" when their proxy is already
-    //    funded. The RPC call is best-effort; failure is silently ignored.
-    let proxy_from_creds: Option<String> = load_credentials()
-        .ok()
-        .flatten()
-        .and_then(|c| c.proxy_wallet);
+    // 2. Read local creds — detect existing mode and wallet addresses.
+    //    Priority: creds.json (persisted mode) > on-chain detection > new user flow.
+    let saved_creds = load_credentials().ok().flatten();
+    let saved_mode  = saved_creds.as_ref().map(|c| c.mode.clone());
+
+    let proxy_from_creds: Option<String> = saved_creds.as_ref().and_then(|c| c.proxy_wallet.clone());
+    let deposit_wallet_from_creds: Option<String> = saved_creds.as_ref().and_then(|c| c.deposit_wallet.clone());
+
+    // On-chain fallback only when creds.json has no mode set (fresh install or wiped creds).
     let proxy: Option<String> = match proxy_from_creds {
         Some(p) => Some(p),
-        // Only treat the on-chain probe result as a proxy if it's actually deployed —
-        // the trace can produce the deterministic CREATE2 address for un-deployed
-        // proxies too, which would mislead the status message into showing a fake proxy.
-        None => get_existing_proxy(&eoa).await.ok().flatten()
+        None if saved_mode.is_none() => get_existing_proxy(&eoa).await.ok().flatten()
             .filter(|(_, exists)| *exists)
             .map(|(addr, _)| addr),
+        None => None,
+    };
+    let deposit_wallet: Option<String> = match deposit_wallet_from_creds {
+        Some(d) => Some(d),
+        None if saved_mode.is_none() && proxy.is_none() =>
+            crate::onchainos::get_existing_deposit_wallet(&eoa).await,
+        None => None,
     };
 
-    // 3. Positions belong to the maker wallet — proxy if it exists, else EOA
-    let primary_wallet = proxy.clone().unwrap_or_else(|| eoa.clone());
+    // 3. Positions belong to the maker wallet — deposit wallet > proxy > EOA
+    let primary_wallet = deposit_wallet.clone()
+        .or_else(|| proxy.clone())
+        .unwrap_or_else(|| eoa.clone());
 
     // 4. Parallel fetch: CLOB access + EOA POL + EOA USDC.e + positions
     let (access_result, pol_result, eoa_usdc_result, positions_result) = tokio::join!(

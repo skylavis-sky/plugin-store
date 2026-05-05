@@ -10,7 +10,7 @@ use crate::auth::ensure_credentials;
 use crate::config::OrderVersion;
 use crate::onchainos::{get_wallet_address, is_ctf_approved_for_all};
 use crate::series;
-use crate::signing::{sign_order_v2_via_onchainos, sign_order_via_onchainos, OrderParams,
+use crate::signing::{sign_order_v2_via_onchainos, sign_order_v2_poly1271_via_onchainos, sign_order_via_onchainos, OrderParams,
     OrderParamsV2, BYTES32_ZERO};
 
 use super::buy::{resolve_from_gamma, resolve_market_token};
@@ -301,6 +301,14 @@ async fn run_inner(
             (proxy, 1u8)
         }
         TradingMode::Eoa => (signer_addr.clone(), 0u8),
+        TradingMode::DepositWallet => {
+            let dw = creds.deposit_wallet.as_ref().ok_or_else(|| anyhow::anyhow!(
+                "DEPOSIT_WALLET mode requires a deposit wallet. \
+                 Run `polymarket setup-deposit-wallet` to create one first."
+            ))?.clone();
+            eprintln!("[polymarket] Using DEPOSIT_WALLET mode — maker: {}", dw);
+            (dw, 3u8) // POLY_1271
+        }
     };
 
     // Check CTF token balance (from maker's address).
@@ -441,10 +449,16 @@ async fn run_inner(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
+            // DepositWallet: maker = signer = deposit_wallet_addr (not EOA).
+            let (order_maker, order_signer) = if effective_mode == TradingMode::DepositWallet {
+                (maker_addr.clone(), maker_addr.clone())
+            } else {
+                (maker_addr.clone(), signer_addr.clone())
+            };
             let params = OrderParamsV2 {
                 salt,
-                maker: maker_addr.clone(),
-                signer: signer_addr.clone(),
+                maker: order_maker,
+                signer: order_signer,
                 token_id: token_id.clone(),
                 maker_amount: maker_amount_raw as u64,
                 taker_amount: taker_amount_raw as u64,
@@ -454,7 +468,11 @@ async fn run_inner(
                 metadata: BYTES32_ZERO.to_string(),
                 builder: BYTES32_ZERO.to_string(),
             };
-            let signature = sign_order_v2_via_onchainos(&params, neg_risk).await?;
+            let signature = if effective_mode == TradingMode::DepositWallet {
+                sign_order_v2_poly1271_via_onchainos(&params, neg_risk).await?
+            } else {
+                sign_order_v2_via_onchainos(&params, neg_risk).await?
+            };
             let order_body = OrderBodyV2 {
                 salt,
                 maker: maker_addr.clone(),
