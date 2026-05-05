@@ -7,7 +7,9 @@ use crate::api::{
 use crate::auth::ensure_credentials;
 use crate::config::OrderVersion;
 use crate::onchainos::get_wallet_address;
-use crate::signing::{sign_order_v2_via_onchainos, OrderParamsV2, BYTES32_ZERO};
+use crate::signing::{
+    sign_order_v2_poly1271_via_onchainos, sign_order_v2_via_onchainos, OrderParamsV2, BYTES32_ZERO,
+};
 
 use super::buy::{resolve_from_gamma, resolve_market_token};
 
@@ -135,9 +137,17 @@ async fn run_inner(
     let signer_addr = get_wallet_address().await?;
     let creds = ensure_credentials(&client, &signer_addr).await?;
 
-    // Confirm flow always uses V2 signing (RFQ is a V2-only feature).
+    // RFQ is a V2-only feature — bail clearly if the CLOB is still on V1
+    // instead of silently producing a V2-signed order the V1 server can't validate.
     let clob_version_raw = get_clob_version(&client).await?;
-    let _clob_version = if clob_version_raw == 2 { OrderVersion::V2 } else { OrderVersion::V1 };
+    if clob_version_raw != 2 {
+        bail!(
+            "RFQ requires CLOB V2 (cutover ~2026-04-28). Current version reports {}. \
+             Wait for the V2 migration to complete and retry.",
+            clob_version_raw
+        );
+    }
+    let _clob_version = OrderVersion::V2;
 
     // Resolve maker address from trading mode.
     use crate::config::TradingMode;
@@ -159,6 +169,16 @@ async fn run_inner(
         TradingMode::Eoa => (signer_addr.clone(), 0u8),
     };
 
+    // For sig_type=3 (POLY_1271 / DepositWallet), CLOB validates
+    //   order.signer == deposit_wallet_of(API_KEY)
+    // and verifies the signature via deposit_wallet.isValidSignature() (ERC-1271).
+    // For PolyProxy / EOA, signer = EOA. Match sell.rs / buy.rs convention.
+    let order_signer = if creds.mode == TradingMode::DepositWallet {
+        maker_addr.clone()
+    } else {
+        signer_addr.clone()
+    };
+
     // Compute amounts from quoted price and usdc amount.
     let maker_amount_raw = (usdc_amount * 1_000_000.0).round() as u64;
     let taker_amount_raw = (usdc_amount / quoted_price * 1_000_000.0).round() as u64;
@@ -176,7 +196,7 @@ async fn run_inner(
     let params = OrderParamsV2 {
         salt,
         maker: maker_addr.clone(),
-        signer: signer_addr.clone(),
+        signer: order_signer.clone(),
         token_id: token_id.clone(),
         maker_amount: maker_amount_raw,
         taker_amount: taker_amount_raw,
@@ -188,12 +208,21 @@ async fn run_inner(
     };
 
     eprintln!("[polymarket] Signing RFQ order at price {}...", quoted_price);
-    let signature = sign_order_v2_via_onchainos(&params, neg_risk).await?;
+    // DepositWallet (sig_type=3) requires the Solady ERC-7739 TypedDataSign
+    // envelope — the deposit wallet's isValidSignature re-hashes via
+    // TypedDataSign internally, so a plain EIP-712 signature would fail
+    // ERC-1271 verification at CLOB. PolyProxy (sig_type=1) and EOA (sig_type=0)
+    // use plain EIP-712.
+    let signature = if creds.mode == TradingMode::DepositWallet {
+        sign_order_v2_poly1271_via_onchainos(&params, neg_risk).await?
+    } else {
+        sign_order_v2_via_onchainos(&params, neg_risk).await?
+    };
 
     let order_body = OrderBodyV2 {
         salt,
         maker: maker_addr.clone(),
-        signer: signer_addr.clone(),
+        signer: order_signer.clone(),
         token_id: token_id.clone(),
         maker_amount: maker_amount_raw.to_string(),
         taker_amount: taker_amount_raw.to_string(),
