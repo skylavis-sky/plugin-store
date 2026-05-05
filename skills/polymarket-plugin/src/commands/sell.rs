@@ -446,25 +446,53 @@ async fn run_inner(
     let resp = match clob_version {
         OrderVersion::V2 => {
             // V2 CLOB amount precision constraints for SELL orders:
-            // - maker (shares): max 5 decimal places → divisible by 10 in millionths (already guaranteed
-            //   by SHARE_RAW step, but enforce explicitly)
-            // - taker (USDC received): max 2 decimal places → divisible by 10000 in millionths
-            // For sell, rounding taker DOWN reduces USDC received slightly. Since the CLOB
-            // fills at the best bid (≥ our specified min price), reducing taker slightly below
-            // the best bid still results in a fill — we just receive slightly less than the raw bid.
-            const V2_USDC_STEP: u128 = 10_000;  // 0.01 USDC = 10000 raw
-            const V2_SHARE_STEP: u128 = 10;      // 0.00001 shares = 10 raw
-            maker_amount_raw = (maker_amount_raw / V2_SHARE_STEP) * V2_SHARE_STEP;
-            if taker_amount_raw % V2_USDC_STEP != 0 {
-                // Round down taker USDC to 2 decimal places
-                taker_amount_raw = (taker_amount_raw / V2_USDC_STEP) * V2_USDC_STEP;
-                if taker_amount_raw == 0 {
-                    anyhow::bail!(
-                        "Amount too small for V2 precision: price {:.4} \
-                         produces a USDC payout below $0.01. Try a larger amount.",
-                        limit_price
-                    );
-                }
+            //   maker (shares): max 5 decimal places → divisible by 10 in millionths
+            //   taker (USDC):   max 2 decimal places → divisible by 10,000 in millionths
+            //
+            // IMPORTANT: taker = price_ticks * maker / tick_scale. The CLOB validates that
+            // taker/maker equals a valid tick price. Rounding taker independently breaks the
+            // price ratio — the CLOB rejects with "breaks minimum tick size rule".
+            //
+            // Correct approach: find the combined step for maker such that
+            //   (a) price_ticks * maker / tick_scale is divisible by V2_USDC_STEP (taker 2dp), AND
+            //   (b) maker is divisible by the GCD alignment step (price ratio integrity)
+            //
+            // min_maker_for_usdc = (tick_scale * V2_USDC_STEP) / gcd(price_ticks, tick_scale * V2_USDC_STEP)
+            // combined_step = lcm(step, min_maker_for_usdc)
+            const V2_USDC_STEP: u128 = 10_000;
+
+            fn gcd_v2(a: u128, b: u128) -> u128 { if b == 0 { a } else { gcd_v2(b, a % b) } }
+
+            let combined_step = if tick_scale > 0 && price_ticks > 0 {
+                let g = gcd_v2(price_ticks, tick_scale.saturating_mul(V2_USDC_STEP));
+                let min_maker_for_usdc = tick_scale.saturating_mul(V2_USDC_STEP) / g;
+                let g2 = gcd_v2(step, min_maker_for_usdc);
+                step / g2 * min_maker_for_usdc  // lcm(step, min_maker_for_usdc)
+            } else {
+                step
+            };
+
+            // Re-align from max_maker_raw using combined_step (combined_step ≥ step,
+            // so this can only reduce maker further from the GCD-aligned value).
+            maker_amount_raw = (max_maker_raw / combined_step) * combined_step;
+            taker_amount_raw = price_ticks * maker_amount_raw / tick_scale;
+
+            if maker_amount_raw == 0 || taker_amount_raw == 0 {
+                anyhow::bail!(
+                    "Amount too small for V2 precision: {:.6} shares at price {:.4} \
+                     rounds to 0 after combined GCD + USDC-precision alignment. \
+                     Minimum is ~{:.6} shares. Try a larger amount.",
+                    share_amount, limit_price, combined_step as f64 / 1_000_000.0
+                );
+            }
+
+            let v2_actual_shares = maker_amount_raw as f64 / 1_000_000.0;
+            if v2_actual_shares < actual_shares - 1e-9 {
+                eprintln!(
+                    "[polymarket] V2 CLOB precision further reduced shares from {:.6} to {:.6} \
+                     to ensure USDC payout is a valid 2dp amount.",
+                    actual_shares, v2_actual_shares
+                );
             }
 
             let timestamp_ms = std::time::SystemTime::now()
