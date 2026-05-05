@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -58,14 +59,75 @@ fn creds_path() -> PathBuf {
     base.join("polymarket").join("creds.json")
 }
 
-pub fn load_credentials() -> Result<Option<Credentials>> {
-    let path = creds_path();
-    if !path.exists() {
-        return Ok(None);
+// ── Multi-wallet credential store ─────────────────────────────────────────────
+//
+// v2 on-disk format:
+//   {
+//     "_version": 2,
+//     "0xabc...": { "api_key": "...", "mode": "poly_proxy", ... },
+//     "0xdef...": { "api_key": "...", "mode": "deposit_wallet", ... }
+//   }
+//
+// v1 (legacy) format: flat Credentials object with a "signing_address" field.
+// Auto-migrated to v2 on first read — user sees no interruption.
+
+/// Per-wallet entry in the multi-wallet store (address is the map key).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct CredentialsEntry {
+    pub api_key: String,
+    pub secret: String,
+    pub passphrase: String,
+    #[serde(default)]
+    pub nonce: u64,
+    #[serde(default)]
+    pub proxy_wallet: Option<String>,
+    #[serde(default)]
+    pub deposit_wallet: Option<String>,
+    #[serde(default)]
+    pub mode: TradingMode,
+}
+
+impl CredentialsEntry {
+    fn is_empty(&self) -> bool { self.api_key.is_empty() }
+    fn into_credentials(self, addr: &str) -> Credentials {
+        Credentials {
+            api_key: self.api_key,
+            secret: self.secret,
+            passphrase: self.passphrase,
+            nonce: self.nonce,
+            signing_address: addr.to_lowercase(),
+            proxy_wallet: self.proxy_wallet,
+            deposit_wallet: self.deposit_wallet,
+            mode: self.mode,
+        }
     }
-    // Warn if file is readable by group/other (Unix only)
+}
+
+impl From<&Credentials> for CredentialsEntry {
+    fn from(c: &Credentials) -> Self {
+        CredentialsEntry {
+            api_key: c.api_key.clone(),
+            secret: c.secret.clone(),
+            passphrase: c.passphrase.clone(),
+            nonce: c.nonce,
+            proxy_wallet: c.proxy_wallet.clone(),
+            deposit_wallet: c.deposit_wallet.clone(),
+            mode: c.mode.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct MultiWalletStore {
+    #[serde(rename = "_version")]
+    version: u32,
+    #[serde(flatten)]
+    wallets: HashMap<String, CredentialsEntry>,
+}
+
+fn warn_permissions(path: &PathBuf) {
     #[cfg(unix)]
-    if let Ok(meta) = std::fs::metadata(&path) {
+    if let Ok(meta) = std::fs::metadata(path) {
         let mode = meta.permissions().mode();
         if mode & 0o077 != 0 {
             eprintln!(
@@ -74,37 +136,101 @@ pub fn load_credentials() -> Result<Option<Credentials>> {
             );
         }
     }
-    let data = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let creds: Credentials = serde_json::from_str(&data)
-        .with_context(|| "parsing creds.json")?;
-    if creds.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(creds))
 }
 
+/// Load the multi-wallet store from disk, auto-migrating v1 format if needed.
+fn load_store() -> Result<MultiWalletStore> {
+    let path = creds_path();
+    if !path.exists() {
+        return Ok(MultiWalletStore { version: 2, wallets: HashMap::new() });
+    }
+    warn_permissions(&path);
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let v: serde_json::Value = serde_json::from_str(&raw)
+        .with_context(|| "parsing creds.json")?;
+
+    if v.get("_version").and_then(|x| x.as_u64()) == Some(2) {
+        // v2 multi-wallet format
+        serde_json::from_value(v).with_context(|| "parsing multi-wallet creds.json")
+    } else if v.get("signing_address").is_some() {
+        // v1 legacy format — auto-migrate transparently
+        let old: Credentials = serde_json::from_value(v)
+            .with_context(|| "parsing legacy creds.json")?;
+        let mut store = MultiWalletStore { version: 2, wallets: HashMap::new() };
+        if !old.is_empty() {
+            let addr = old.signing_address.to_lowercase();
+            store.wallets.insert(addr, CredentialsEntry::from(&old));
+        }
+        eprintln!("[polymarket] Migrated creds.json to multi-wallet format (v2).");
+        save_store(&store)?;
+        Ok(store)
+    } else {
+        Ok(MultiWalletStore { version: 2, wallets: HashMap::new() })
+    }
+}
+
+/// Write the multi-wallet store to disk with 0600 permissions.
+fn save_store(store: &MultiWalletStore) -> Result<()> {
+    let path = creds_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let data = serde_json::to_string_pretty(store)?;
+    std::fs::write(&path, &data)
+        .with_context(|| format!("writing {}", path.display()))?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("setting permissions on {}", path.display()))?;
+    Ok(())
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Load credentials for a specific wallet address.
+/// Returns None if no entry exists for that address.
+/// Auto-migrates v1 single-wallet format on first read.
+pub fn load_credentials_for(addr: &str) -> Result<Option<Credentials>> {
+    let store = load_store()?;
+    Ok(store.wallets.get(&addr.to_lowercase())
+        .filter(|e| !e.is_empty())
+        .map(|e| e.clone().into_credentials(addr)))
+}
+
+/// Load any stored credentials (first entry). Used by callers that don't yet
+/// know the wallet address (hint text, redeem proxy detection, etc.).
+/// Prefer load_credentials_for(addr) for exact wallet lookups.
+pub fn load_credentials() -> Result<Option<Credentials>> {
+    let store = load_store()?;
+    Ok(store.wallets.into_iter()
+        .find(|(_, e)| !e.is_empty())
+        .map(|(addr, e)| e.into_credentials(&addr)))
+}
+
+/// Save (upsert) credentials for the wallet in creds.signing_address.
+/// Creates or updates the entry for that address; other wallets are untouched.
+pub fn save_credentials(creds: &Credentials) -> Result<()> {
+    anyhow::ensure!(!creds.signing_address.is_empty(), "save_credentials: signing_address must be set");
+    let mut store = load_store()?;
+    store.wallets.insert(creds.signing_address.to_lowercase(), CredentialsEntry::from(creds));
+    save_store(&store)
+}
+
+/// Remove credentials for a specific wallet address (forces re-derivation on next use).
+/// Other wallet entries are preserved.
+pub fn clear_credentials_for(addr: &str) -> Result<()> {
+    let mut store = load_store()?;
+    store.wallets.remove(&addr.to_lowercase());
+    save_store(&store)
+}
+
+/// Clear ALL stored credentials (full reset — for unrecoverable auth errors).
 pub fn clear_credentials() -> Result<()> {
     let path = creds_path();
     if path.exists() {
         std::fs::remove_file(&path)
             .with_context(|| format!("removing {}", path.display()))?;
     }
-    Ok(())
-}
-
-pub fn save_credentials(creds: &Credentials) -> Result<()> {
-    let path = creds_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let data = serde_json::to_string_pretty(creds)?;
-    std::fs::write(&path, &data)
-        .with_context(|| format!("writing {}", path.display()))?;
-    // Restrict to owner read/write only (Unix only — Windows uses ACLs)
-    #[cfg(unix)]
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("setting permissions on {}", path.display()))?;
     Ok(())
 }
 

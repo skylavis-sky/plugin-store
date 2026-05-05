@@ -550,11 +550,11 @@ async fn run_inner(
         }
         let msg_upper = msg.to_uppercase();
         if msg_upper.contains("NOT AUTHORIZED") || msg_upper.contains("UNAUTHORIZED") {
-            let _ = crate::config::clear_credentials();
+            let _ = crate::config::clear_credentials_for(&signer_addr);
             bail!(
                 "Order rejected: credentials are stale or invalid ({}). \
-                 Cached credentials cleared — run the command again to re-derive.",
-                msg
+                 Cached credentials cleared for {} — run the command again to re-derive.",
+                msg, &signer_addr[..std::cmp::min(10, signer_addr.len())]
             );
         }
         if msg_upper.contains("ORDER_VERSION_MISMATCH") || msg_upper.contains("VERSION_MISMATCH") {

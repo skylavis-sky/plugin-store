@@ -264,12 +264,11 @@ pub async fn ensure_credentials(client: &Client, wallet_addr: &str) -> Result<Cr
         });
     }
 
-    // Try loading from file — only use if it matches the current wallet
-    if let Some(creds) = crate::config::load_credentials()? {
-        if creds.signing_address.to_lowercase() == wallet_addr.to_lowercase() {
-            return Ok(creds);
-        }
-        eprintln!("[polymarket] Wallet address changed, re-deriving API credentials...");
+    // Try loading from the multi-wallet store for this specific address.
+    // No address check needed — load_credentials_for only returns an entry
+    // when the address matches exactly.
+    if let Some(creds) = crate::config::load_credentials_for(wallet_addr)? {
+        return Ok(creds);
     }
 
     // Auto-derive via onchainos wallet EIP-712 signing

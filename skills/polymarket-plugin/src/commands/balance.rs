@@ -24,7 +24,7 @@ pub async fn run() -> Result<()> {
 
 async fn run_inner() -> Result<()> {
     let eoa = get_wallet_address().await?;
-    let (proxy, deposit_wallet) = crate::config::load_credentials()
+    let (proxy, deposit_wallet) = crate::config::load_credentials_for(&eoa)
         .ok()
         .flatten()
         .map(|c| (c.proxy_wallet, c.deposit_wallet))

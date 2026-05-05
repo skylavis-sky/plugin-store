@@ -2,7 +2,6 @@ use clap::Args;
 use reqwest::Client;
 
 use crate::api::{check_clob_access, get_positions, Position};
-use crate::config::load_credentials;
 use crate::onchainos::{get_existing_proxy, get_pol_balance, get_usdc_balance, get_wallet_address};
 
 const ABOUT: &str = "Polymarket is the largest prediction-market protocol on Polygon — trade YES/NO outcome tokens on real-world events with USDC.e. This skill supports both EOA and Polymarket proxy (gasless) trading modes.";
@@ -41,13 +40,11 @@ async fn run_inner(args: QuickstartArgs) -> anyhow::Result<()> {
         &eoa[..std::cmp::min(10, eoa.len())]
     );
 
-    // 2. Read local creds — detect existing mode and wallet addresses.
-    //    Priority: creds.json (persisted mode) > on-chain detection > new user flow.
-    //    IMPORTANT: only trust saved_creds if they belong to the CURRENT wallet address.
-    //    If the user switched onchainos accounts, the old creds.json has a different
-    //    signing_address — treat it as absent so on-chain detection runs fresh.
-    let saved_creds = load_credentials().ok().flatten()
-        .filter(|c| c.signing_address.to_lowercase() == eoa.to_lowercase());
+    // 2. Read local creds for this specific wallet address.
+    //    load_credentials_for only returns an entry when signing_address matches exactly,
+    //    so account-switching (different address) automatically returns None and triggers
+    //    fresh on-chain detection — no manual creds.json clear required.
+    let saved_creds = crate::config::load_credentials_for(&eoa).ok().flatten();
     let saved_mode  = saved_creds.as_ref().map(|c| c.mode.clone());
 
     let proxy_from_creds: Option<String> = saved_creds.as_ref().and_then(|c| c.proxy_wallet.clone());
