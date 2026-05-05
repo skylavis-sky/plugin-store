@@ -23,14 +23,16 @@ async fn run_inner(state: &str, only_v1: bool, limit: Option<usize>) -> Result<(
     let client = Client::new();
     let signer_addr = get_wallet_address().await?;
 
-    // In DEPOSIT_WALLET mode, orders are indexed by the deposit wallet's API key.
-    // We must authenticate as the deposit wallet to retrieve its orders.
-    let stored = crate::config::load_credentials().ok().flatten();
+    // Load credentials for the current EOA (not any wallet) to get the correct mode.
+    let stored = crate::config::load_credentials_for(&signer_addr).ok().flatten();
     let (auth_addr, creds) = if let Some(ref c) = stored {
         if c.mode == crate::config::TradingMode::DepositWallet {
-            if let Some(ref dw) = c.deposit_wallet {
-                let dw_creds = ensure_credentials(&client, dw).await?;
-                (dw.clone(), dw_creds)
+            if c.deposit_wallet.is_some() {
+                // Orders are placed with L2 auth using the EOA's API key (see buy.rs:order_auth_addr).
+                // The CLOB indexes by the L2 auth address (EOA), so query with EOA creds.
+                // The deposit wallet appears as `maker` in the order body but not the auth key.
+                let eoa_creds = ensure_credentials(&client, &signer_addr).await?;
+                (signer_addr.clone(), eoa_creds)
             } else {
                 (signer_addr.clone(), ensure_credentials(&client, &signer_addr).await?)
             }
@@ -98,8 +100,8 @@ async fn run_inner(state: &str, only_v1: bool, limit: Option<usize>) -> Result<(
             creds.proxy_wallet.as_deref().unwrap_or("unknown")
         )),
         TradingMode::DepositWallet => Some(format!(
-            "DEPOSIT_WALLET mode: orders are placed with the deposit wallet ({}) as maker \
-             and authenticated via its own CLOB API key (ERC-1271 / sig_type=3).",
+            "DEPOSIT_WALLET mode: orders have maker={} (deposit wallet, sig_type=3/POLY_1271) \
+             but are indexed under the EOA signer's CLOB API key.",
             creds.deposit_wallet.as_deref().unwrap_or("unknown")
         )),
         _ => None,

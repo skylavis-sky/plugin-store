@@ -22,7 +22,7 @@ async fn run_inner(amount: &str, dry_run: bool) -> Result<()> {
     use crate::config::Contracts;
 
     let eoa = get_wallet_address().await?;
-    let creds = crate::config::load_credentials()
+    let creds = crate::config::load_credentials_for(&eoa)
         .ok()
         .flatten()
         .ok_or_else(|| anyhow::anyhow!("No credentials found. Run `polymarket setup-proxy` first."))?;

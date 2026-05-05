@@ -10,12 +10,13 @@ use crate::onchainos::get_wallet_address;
 /// so cancel calls must authenticate as the deposit wallet, not the EOA.
 async fn resolve_cancel_auth(client: &Client) -> anyhow::Result<(String, crate::config::Credentials)> {
     let signer_addr = get_wallet_address().await?;
-    let stored = crate::config::load_credentials().ok().flatten();
+    let stored = crate::config::load_credentials_for(&signer_addr).ok().flatten();
     if let Some(ref c) = stored {
         if c.mode == crate::config::TradingMode::DepositWallet {
-            if let Some(ref dw) = c.deposit_wallet {
-                let dw_creds = ensure_credentials(client, dw).await?;
-                return Ok((dw.clone(), dw_creds));
+            if c.deposit_wallet.is_some() {
+                // Cancel auth uses EOA creds — same as order placement (buy.rs:order_auth_addr = signer_addr).
+                let creds = ensure_credentials(client, &signer_addr).await?;
+                return Ok((signer_addr, creds));
             }
         }
     }

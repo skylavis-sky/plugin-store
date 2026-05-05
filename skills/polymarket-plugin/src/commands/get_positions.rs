@@ -26,7 +26,7 @@ async fn run_inner(address: Option<&str>) -> Result<()> {
         (a.to_string(), false)
     } else {
         let eoa = get_wallet_address().await?;
-        let creds = crate::config::load_credentials().ok().flatten();
+        let creds = crate::config::load_credentials_for(&eoa).ok().flatten();
         let use_proxy = creds.as_ref().and_then(|c| match c.mode {
             crate::config::TradingMode::PolyProxy => c.proxy_wallet.clone(),
             crate::config::TradingMode::DepositWallet => c.deposit_wallet.clone(),
@@ -114,7 +114,8 @@ async fn run_inner(address: Option<&str>) -> Result<()> {
         })
     } else {
         // Add mode metadata and a helpful note where applicable.
-        let creds = crate::config::load_credentials().ok().flatten();
+        let eoa_for_mode = get_wallet_address().await.unwrap_or_default();
+        let creds = crate::config::load_credentials_for(&eoa_for_mode).ok().flatten();
         let (mode_label, mode_note): (&str, Option<String>) = match creds.as_ref().map(|c| &c.mode) {
             Some(crate::config::TradingMode::PolyProxy) => ("proxy", None),
             Some(crate::config::TradingMode::DepositWallet) => {

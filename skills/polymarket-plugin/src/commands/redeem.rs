@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context as _, Result};
 use reqwest::Client;
 
 use crate::api::{get_clob_market, get_gamma_market_by_slug, get_positions};
-use crate::config::load_credentials;
+// load_credentials_for used via crate::config path below
 use crate::onchainos::{
     ctf_redeem_positions, ctf_redeem_via_proxy, decimal_str_to_hex64, get_ctf_balance,
     get_existing_proxy, get_pol_balance, get_wallet_address, negrisk_redeem_positions,
@@ -387,7 +387,7 @@ pub async fn run(market_id: &str, dry_run: bool, strategy_id: Option<&str>) -> R
         }
     };
 
-    let creds = load_credentials().unwrap_or_default();
+    let creds = crate::config::load_credentials_for(&eoa_addr).ok().flatten();
     let proxy_addr = creds.as_ref().and_then(|c| c.proxy_wallet.clone());
     let deposit_wallet_addr = creds.and_then(|c| c.deposit_wallet);
 
@@ -473,7 +473,7 @@ pub async fn run_all(dry_run: bool, strategy_id: Option<&str>) -> Result<()> {
         }
     };
 
-    let creds = load_credentials().unwrap_or_default();
+    let creds = crate::config::load_credentials_for(&eoa_addr).ok().flatten();
     let proxy_addr = creds.as_ref().and_then(|c| c.proxy_wallet.clone());
     let deposit_wallet_addr = creds.and_then(|c| c.deposit_wallet);
 
