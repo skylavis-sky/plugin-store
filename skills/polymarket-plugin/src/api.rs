@@ -1383,11 +1383,11 @@ pub struct WalletNonceResponse {
 }
 
 /// Deploy a new deposit wallet via the Polymarket relayer (WALLET-CREATE).
+/// No user signature is required — the relayer deploys a deterministic ERC-1967 proxy.
 /// Returns the deployed wallet address.
 pub async fn relayer_wallet_create(
     client: &Client,
     owner_addr: &str,
-    signature: &str,
 ) -> Result<String> {
     use crate::config::Contracts;
     let url = format!("{}/submit", crate::config::Urls::RELAYER);
@@ -1395,7 +1395,6 @@ pub async fn relayer_wallet_create(
         "type": "WALLET-CREATE",
         "from": owner_addr,
         "to":   Contracts::DEPOSIT_WALLET_FACTORY,
-        "signature": signature,
     });
     let resp: RelayerSubmitResponse = client
         .post(&url)
@@ -1418,20 +1417,26 @@ pub async fn relayer_wallet_create(
 /// Submit a signed batch of calls via the Polymarket relayer (WALLET).
 pub async fn relayer_wallet_batch(
     client: &Client,
+    owner_addr: &str,
     wallet_addr: &str,
     nonce: u64,
     deadline: u64,
     calls: Vec<serde_json::Value>,
     signature: &str,
 ) -> Result<String> {
+    use crate::config::Contracts;
     let url = format!("{}/submit", crate::config::Urls::RELAYER);
     let body = serde_json::json!({
-        "type": "WALLET",
-        "wallet": wallet_addr,
-        "nonce":  nonce,
-        "deadline": deadline,
-        "calls": calls,
+        "type":      "WALLET",
+        "from":      owner_addr,
+        "to":        Contracts::DEPOSIT_WALLET_FACTORY,
+        "nonce":     nonce,
         "signature": signature,
+        "depositWalletParams": {
+            "depositWallet": wallet_addr,
+            "deadline":      deadline,
+            "calls":         calls,
+        },
     });
     let resp: RelayerSubmitResponse = client
         .post(&url)

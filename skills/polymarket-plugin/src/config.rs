@@ -296,7 +296,7 @@ impl Urls {
     pub const GAMMA: &'static str = "https://gamma-api.polymarket.com";
     pub const DATA: &'static str = "https://data-api.polymarket.com";
     pub const BRIDGE: &'static str = "https://bridge.polymarket.com";
-    pub const RELAYER: &'static str = "https://relayer.polymarket.com";
+    pub const RELAYER: &'static str = "https://relayer-v2.polymarket.com";
     pub const POLYGON_RPC:  &'static str = "https://polygon.drpc.org";
     pub const ETHEREUM_RPC: &'static str = "https://ethereum.publicnode.com";
     pub const ARBITRUM_RPC: &'static str = "https://arbitrum.drpc.org";

@@ -19,7 +19,7 @@ use crate::api::{get_wallet_nonce, relayer_wallet_batch, relayer_wallet_create, 
 use crate::auth::ensure_credentials;
 use crate::config::{Contracts, TradingMode};
 use crate::onchainos::get_wallet_address;
-use crate::signing::{sign_batch_via_onchainos, BatchParams, WalletCall, BYTES32_ZERO};
+use crate::signing::{sign_batch_via_onchainos, BatchParams, WalletCall};
 
 pub async fn run(dry_run: bool) -> Result<()> {
     match run_inner(dry_run).await {
@@ -67,15 +67,34 @@ async fn run_inner(dry_run: bool) -> Result<()> {
         eprintln!("[polymarket] Skipping deploy — deposit wallet already exists.");
         addr
     } else {
-        eprintln!("[polymarket] Deploying deposit wallet via relayer...");
+        eprintln!("[polymarket] Deploying deposit wallet...");
 
-        // Sign a simple creation proof — the relayer validates the owner signature.
-        // The payload is a standard EIP-712 message committing the owner to the factory.
-        let creation_proof = sign_creation_proof(&owner_addr).await?;
-
-        let addr = relayer_wallet_create(&client, &owner_addr, &creation_proof).await?;
-        eprintln!("[polymarket] Deposit wallet deployed: {}", addr);
-        addr
+        // Gasless deployment via the Polymarket relayer (WALLET-CREATE, no signature required).
+        // The relayer pays gas and deploys a deterministic ERC-1967 proxy.
+        // Note: requires Polymarket builder authorization — regular EOAs cannot call the
+        // factory directly due to OnlyOperator access control.
+        match relayer_wallet_create(&client, &owner_addr).await {
+            Ok(addr) => {
+                eprintln!("[polymarket] Deposit wallet deployed: {}", addr);
+                addr
+            }
+            Err(relayer_err) => {
+                // Compute predicted address so the user can receive funds now and deploy later
+                let predicted = crate::onchainos::predict_deposit_wallet_address(&owner_addr).await;
+                bail!(
+                    "Deposit wallet deployment failed: {}. \
+                     The factory requires Polymarket builder authorization (OnlyOperator). \
+                     To deploy your wallet, visit the Polymarket app (app.polymarket.com), \
+                     connect this wallet ({}), and complete the setup flow. \
+                     Then re-run `polymarket-plugin quickstart` to continue.{}",
+                    relayer_err,
+                    &owner_addr[..std::cmp::min(10, owner_addr.len())],
+                    predicted
+                        .map(|p| format!(" Your predicted wallet address: {}", p))
+                        .unwrap_or_default()
+                );
+            }
+        }
     };
 
     // ── Step 3: build approval batch calls ───────────────────────────────────
@@ -99,10 +118,9 @@ async fn run_inner(dry_run: bool) -> Result<()> {
         .as_secs() + 300; // 5-minute window
 
     let calls_json: Vec<serde_json::Value> = calls.iter().map(|c| serde_json::json!({
-        "callType": c.call_type,
-        "to": c.to,
-        "value": c.value.to_string(),
-        "data": c.data,
+        "target": c.target,
+        "value":  c.value.to_string(),
+        "data":   c.data,
     })).collect();
 
     let batch_params = BatchParams {
@@ -117,6 +135,7 @@ async fn run_inner(dry_run: bool) -> Result<()> {
 
     let batch_tx = relayer_wallet_batch(
         &client,
+        &owner_addr,
         &wallet_addr,
         nonce,
         deadline,
@@ -170,8 +189,7 @@ fn build_approval_calls() -> Vec<WalletCall> {
 
     let make_erc20_approve = |token: &str, spender: &str| -> WalletCall {
         WalletCall {
-            call_type: 0,
-            to: token.to_string(),
+            target: token.to_string(),
             value: 0,
             data: format!("0x{}{}{}", approve_selector, pad_address_hex(spender), max_uint),
         }
@@ -179,8 +197,7 @@ fn build_approval_calls() -> Vec<WalletCall> {
 
     let make_set_approval = |operator: &str| -> WalletCall {
         WalletCall {
-            call_type: 0,
-            to: Contracts::CTF.to_string(),
+            target: Contracts::CTF.to_string(),
             value: 0,
             data: format!(
                 "0x{}{}0000000000000000000000000000000000000000000000000000000000000001",
@@ -210,37 +227,3 @@ fn pad_address_hex(addr: &str) -> String {
     format!("{:0>64}", stripped)
 }
 
-/// Sign a creation proof committing `owner_addr` to the deposit wallet factory.
-/// This is a simple EIP-712 message proving the EOA intends to create a deposit wallet.
-async fn sign_creation_proof(owner_addr: &str) -> Result<String> {
-    let json = serde_json::to_string(&serde_json::json!({
-        "types": {
-            "EIP712Domain": [
-                {"name": "name",    "type": "string"},
-                {"name": "version", "type": "string"},
-                {"name": "chainId", "type": "uint256"},
-                {"name": "verifyingContract", "type": "address"}
-            ],
-            "CreateWallet": [
-                {"name": "owner",   "type": "address"},
-                {"name": "factory", "type": "address"},
-                {"name": "salt",    "type": "bytes32"}
-            ]
-        },
-        "primaryType": "CreateWallet",
-        "domain": {
-            "name":              "DepositWallet",
-            "version":           "1",
-            "chainId":           137,
-            "verifyingContract": Contracts::DEPOSIT_WALLET_FACTORY
-        },
-        "message": {
-            "owner":   owner_addr,
-            "factory": Contracts::DEPOSIT_WALLET_FACTORY,
-            "salt":    BYTES32_ZERO
-        }
-    }))
-    .expect("CreateWallet EIP-712 JSON serialization failed");
-
-    crate::onchainos::sign_eip712(&json).await
-}

@@ -1561,13 +1561,17 @@ pub async fn is_ctf_approved_for_all(owner: &str, operator: &str) -> Result<bool
 ///
 /// Returns `Some(wallet_addr)` if deployed, `None` if not yet deployed or on any
 /// network error (safe default — callers re-route to `setup-deposit-wallet`).
+/// Check if a deposit wallet has been deployed for the given EOA.
+/// Uses `predictWalletAddress(address owner, bytes32 walletId)` to compute
+/// the deterministic CREATE2 address, then verifies code exists there.
+///
+/// walletId = bytes32(uint256(uint160(owner))) — left-pad the 20-byte address to 32 bytes.
 pub async fn get_existing_deposit_wallet(eoa_addr: &str) -> Option<String> {
     use crate::config::{Contracts, Urls};
-    use sha3::{Digest, Keccak256};
 
-    let selector = Keccak256::digest(b"getWallet(address)");
-    let selector_hex = hex::encode(&selector[..4]);
-    let data = format!("0x{}{}", selector_hex, pad_address(eoa_addr));
+    // selector = keccak256("predictWalletAddress(address,bytes32)")[..4] = 0x1f264778
+    let padded = pad_address(eoa_addr); // 64-char hex, left-padded address
+    let data = format!("0x1f264778{padded}{padded}"); // owner + walletId (both = padded address)
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -1593,11 +1597,11 @@ pub async fn get_existing_deposit_wallet(eoa_addr: &str) -> Option<String> {
     let hex_result = v["result"].as_str()?.trim_start_matches("0x");
     if hex_result.len() < 64 { return None; }
     let addr_hex = &hex_result[hex_result.len() - 40..];
-    if addr_hex.chars().all(|c| c == '0') { return None; } // zero = not deployed
+    if addr_hex.chars().all(|c| c == '0') { return None; } // zero = no wallet
 
     let wallet_addr = format!("0x{}", addr_hex);
 
-    // Confirm bytecode exists at predicted address (not just a deterministic pre-image).
+    // Confirm bytecode exists at the predicted address (deployed, not just pre-computed).
     let code_v: serde_json::Value = client
         .post(Urls::polygon_rpc())
         .json(&serde_json::json!({
@@ -1616,6 +1620,42 @@ pub async fn get_existing_deposit_wallet(eoa_addr: &str) -> Option<String> {
 
     Some(wallet_addr)
 }
+
+/// Compute the deterministic deposit wallet address for an EOA without deploying it.
+/// Uses `predictWalletAddress(address owner, bytes32 walletId)`.
+pub async fn predict_deposit_wallet_address(eoa_addr: &str) -> Option<String> {
+    use crate::config::{Contracts, Urls};
+
+    let padded = pad_address(eoa_addr);
+    let data = format!("0x1f264778{padded}{padded}");
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{"to": Contracts::DEPOSIT_WALLET_FACTORY, "data": data}, "latest"],
+        "id": 1
+    });
+
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(Urls::polygon_rpc())
+        .json(&body)
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    if v.get("error").is_some() { return None; }
+
+    let hex_result = v["result"].as_str()?.trim_start_matches("0x");
+    if hex_result.len() < 64 { return None; }
+    let addr_hex = &hex_result[hex_result.len() - 40..];
+    if addr_hex.chars().all(|c| c == '0') { return None; }
+
+    Some(format!("0x{}", addr_hex))
+}
+
 
 // ─── Unit Tests ───────────────────────────────────────────────────────────────
 

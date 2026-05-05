@@ -167,9 +167,7 @@ pub const BYTES32_ZERO: &str = "0x0000000000000000000000000000000000000000000000
 
 /// A single call in a DepositWallet batch.
 pub struct WalletCall {
-    /// 0=CALL, 1=DELEGATECALL
-    pub call_type: u8,
-    pub to: String,
+    pub target: String, // contract to call
     pub value: u64,
     pub data: String, // hex-encoded calldata
 }
@@ -192,10 +190,9 @@ pub struct BatchParams {
 pub async fn sign_batch_via_onchainos(params: &BatchParams) -> Result<String> {
     let calls_json: Vec<serde_json::Value> = params.calls.iter().map(|c| {
         serde_json::json!({
-            "callType": c.call_type,
-            "to": c.to,
-            "value": c.value.to_string(),
-            "data": c.data,
+            "target": c.target,
+            "value":  c.value.to_string(),
+            "data":   c.data,
         })
     }).collect();
 
@@ -208,10 +205,9 @@ pub async fn sign_batch_via_onchainos(params: &BatchParams) -> Result<String> {
                 {"name": "verifyingContract","type": "address"}
             ],
             "Call": [
-                {"name": "callType", "type": "uint8"},
-                {"name": "to",       "type": "address"},
-                {"name": "value",    "type": "uint256"},
-                {"name": "data",     "type": "bytes"}
+                {"name": "target", "type": "address"},
+                {"name": "value",  "type": "uint256"},
+                {"name": "data",   "type": "bytes"}
             ],
             "Batch": [
                 {"name": "wallet",   "type": "address"},
