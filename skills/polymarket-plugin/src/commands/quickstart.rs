@@ -43,7 +43,11 @@ async fn run_inner(args: QuickstartArgs) -> anyhow::Result<()> {
 
     // 2. Read local creds — detect existing mode and wallet addresses.
     //    Priority: creds.json (persisted mode) > on-chain detection > new user flow.
-    let saved_creds = load_credentials().ok().flatten();
+    //    IMPORTANT: only trust saved_creds if they belong to the CURRENT wallet address.
+    //    If the user switched onchainos accounts, the old creds.json has a different
+    //    signing_address — treat it as absent so on-chain detection runs fresh.
+    let saved_creds = load_credentials().ok().flatten()
+        .filter(|c| c.signing_address.to_lowercase() == eoa.to_lowercase());
     let saved_mode  = saved_creds.as_ref().map(|c| c.mode.clone());
 
     let proxy_from_creds: Option<String> = saved_creds.as_ref().and_then(|c| c.proxy_wallet.clone());
