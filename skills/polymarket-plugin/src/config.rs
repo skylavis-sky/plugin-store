@@ -298,6 +298,9 @@ impl Urls {
     pub const BRIDGE: &'static str = "https://bridge.polymarket.com";
     pub const RELAYER: &'static str = "https://relayer-v2.polymarket.com";
     pub const POLYGON_RPC:  &'static str = "https://polygon.drpc.org";
+    /// Dedicated Polygon RPC for eth_getLogs event scanning.
+    /// publicnode supports ≤7,998 block range per request (drpc free tier rejects eth_getLogs above ~7,500).
+    pub const POLYGON_LOGS_RPC: &'static str = "https://polygon-bor-rpc.publicnode.com";
     pub const ETHEREUM_RPC: &'static str = "https://ethereum.publicnode.com";
     pub const ARBITRUM_RPC: &'static str = "https://arbitrum.drpc.org";
     pub const BASE_RPC:     &'static str = "https://base.drpc.org";
@@ -316,6 +319,13 @@ impl Urls {
     pub fn polygon_rpc() -> String {
         std::env::var("POLYMARKET_TEST_POLYGON_RPC")
             .unwrap_or_else(|_| Self::POLYGON_RPC.to_string())
+    }
+
+    /// RPC endpoint used for eth_getLogs event scanning.
+    /// Uses publicnode (supports ≤7,998 block range) instead of drpc free tier.
+    pub fn polygon_logs_rpc() -> String {
+        std::env::var("POLYMARKET_TEST_POLYGON_RPC")
+            .unwrap_or_else(|_| Self::POLYGON_LOGS_RPC.to_string())
     }
 
     pub fn clob() -> String {

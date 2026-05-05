@@ -1037,6 +1037,24 @@ pub async fn get_usdc_balance(addr: &str) -> Result<f64> {
     get_erc20_balance_6dec(Contracts::USDC_E, addr).await
 }
 
+/// Return the current Polygon block number via eth_blockNumber.
+pub async fn get_current_block() -> Option<u64> {
+    use crate::config::Urls;
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(Urls::polygon_rpc())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1
+        }))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let hex = v["result"].as_str()?;
+    u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
+}
+
 /// Get pUSD (ERC-20) balance for an address. Returns human-readable f64 (dollars).
 /// pUSD is the Polymarket USD collateral token that replaces USDC.e for V2 exchange contracts.
 pub async fn get_pusd_balance(addr: &str) -> Result<f64> {
@@ -1554,59 +1572,118 @@ pub async fn is_ctf_approved_for_all(owner: &str, operator: &str) -> Result<bool
 
 // ─── Deposit Wallet detection ─────────────────────────────────────────────────
 
-/// Check whether a deposit wallet has already been deployed for `eoa_addr`.
+/// WalletCreated event signature hash (observed from on-chain factory deployment tx).
 ///
-/// Calls `DEPOSIT_WALLET_FACTORY.getWallet(owner)` via eth_call and then verifies
-/// bytecode is present at the returned address.
+/// Event layout (3 indexed topics):
+///   topic[0] = this signature hash
+///   topic[1] = wallet address (indexed)
+///   topic[2] = owner address (indexed)
+///   topic[3] = walletId (indexed, = bytes32(uint160(owner)))
+///   data     = implementation address (non-indexed)
+const WALLET_CREATED_TOPIC: &str =
+    "0x7441de0ad639fe5d2bf1c22447715a0528b682385736bb40ae8dd92555eb8276";
+
+/// Wait for a WALLET-CREATE relayer tx to confirm and extract the deployed deposit wallet
+/// address from the factory's WalletCreated event log.
 ///
-/// Returns `Some(wallet_addr)` if deployed, `None` if not yet deployed or on any
-/// network error (safe default — callers re-route to `setup-deposit-wallet`).
+/// Returns the wallet address (lowercase, 0x-prefixed).
+pub async fn wait_for_wallet_create_receipt(
+    tx_hash: &str,
+    max_wait_secs: u64,
+) -> Result<String> {
+    use crate::config::{Contracts, Urls};
+    use std::time::{Duration, Instant};
+    use tokio::time::sleep;
+
+    let factory_lower = Contracts::DEPOSIT_WALLET_FACTORY.to_lowercase();
+    let deadline = Instant::now() + Duration::from_secs(max_wait_secs);
+    loop {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash],
+            "id": 1
+        });
+        let resp = reqwest::Client::new()
+            .post(Urls::polygon_rpc())
+            .json(&body)
+            .send()
+            .await;
+        if let Ok(r) = resp {
+            if let Ok(v) = r.json::<serde_json::Value>().await {
+                if v["result"].is_object() {
+                    let status = v["result"]["status"].as_str().unwrap_or("0x1");
+                    if status == "0x0" {
+                        anyhow::bail!(
+                            "WALLET-CREATE tx {} reverted on-chain (status 0x0). \
+                             The factory's deploy() function requires OnlyOperator authorization. \
+                             Check that builder credentials are valid.",
+                            tx_hash
+                        );
+                    }
+                    // Parse wallet address from the factory's WalletCreated event
+                    if let Some(logs) = v["result"]["logs"].as_array() {
+                        for log in logs {
+                            let addr = log["address"].as_str().unwrap_or("").to_lowercase();
+                            if addr == factory_lower {
+                                if let Some(topics) = log["topics"].as_array() {
+                                    if topics.len() >= 2
+                                        && topics[0].as_str().unwrap_or("") == WALLET_CREATED_TOPIC
+                                    {
+                                        // topic[1] = indexed wallet address (32-byte ABI word)
+                                        let t1 = topics[1].as_str().unwrap_or("");
+                                        let hex = t1.trim_start_matches("0x");
+                                        if hex.len() >= 40 {
+                                            return Ok(format!("0x{}", &hex[hex.len() - 40..]));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    anyhow::bail!(
+                        "WALLET-CREATE tx {} confirmed (status 0x1) but no WalletCreated \
+                         event found in factory logs. This is unexpected — please report.",
+                        tx_hash
+                    );
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "WALLET-CREATE tx {} not observed on Polygon within {}s. \
+                 Check Polygonscan to confirm the transaction was included.",
+                tx_hash,
+                max_wait_secs
+            );
+        }
+        sleep(Duration::from_millis(2000)).await;
+    }
+}
+
 /// Check if a deposit wallet has been deployed for the given EOA.
-/// Uses `predictWalletAddress(address owner, bytes32 walletId)` to compute
-/// the deterministic CREATE2 address, then verifies code exists there.
 ///
-/// walletId = bytes32(uint256(uint160(owner))) — left-pad the 20-byte address to 32 bytes.
+/// Strategy (two-pass):
+/// 1. Fast: `predictWalletAddress(owner, walletId)` — works for post-factory-upgrade wallets.
+/// 2. Fallback: `eth_getLogs` scan backwards in 9,999-block chunks (free-tier limit).
+///    Handles wallets deployed before a factory upgrade where the CREATE2 salt changed.
+///    Scans up to MAX_SCAN_BLOCKS of history (≈14 hours of Polygon blocks).
+///
+/// Returns `Some(wallet_addr)` if deployed (code present), `None` otherwise.
 pub async fn get_existing_deposit_wallet(eoa_addr: &str) -> Option<String> {
     use crate::config::{Contracts, Urls};
 
-    // selector = keccak256("predictWalletAddress(address,bytes32)")[..4] = 0x1f264778
-    let padded = pad_address(eoa_addr); // 64-char hex, left-padded address
-    let data = format!("0x1f264778{padded}{padded}"); // owner + walletId (both = padded address)
-
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "eth_call",
-        "params": [{"to": Contracts::DEPOSIT_WALLET_FACTORY, "data": data}, "latest"],
-        "id": 1
-    });
-
     let client = reqwest::Client::new();
+
+    // ── Pass 1: predictWalletAddress (fast, O(2) RPC calls) ─────────────────
+    let padded = pad_address(eoa_addr);
+    let data = format!("0x1f264778{padded}{padded}"); // selector + owner + walletId
     let v: serde_json::Value = client
         .post(Urls::polygon_rpc())
-        .json(&body)
-        .send()
-        .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
-
-    if v.get("error").is_some() { return None; }
-
-    // ABI-encoded address: 32 bytes, address is last 20 bytes (40 hex chars).
-    let hex_result = v["result"].as_str()?.trim_start_matches("0x");
-    if hex_result.len() < 64 { return None; }
-    let addr_hex = &hex_result[hex_result.len() - 40..];
-    if addr_hex.chars().all(|c| c == '0') { return None; } // zero = no wallet
-
-    let wallet_addr = format!("0x{}", addr_hex);
-
-    // Confirm bytecode exists at the predicted address (deployed, not just pre-computed).
-    let code_v: serde_json::Value = client
-        .post(Urls::polygon_rpc())
         .json(&serde_json::json!({
-            "jsonrpc": "2.0", "method": "eth_getCode",
-            "params": [&wallet_addr, "latest"], "id": 1
+            "jsonrpc": "2.0", "method": "eth_call",
+            "params": [{"to": Contracts::DEPOSIT_WALLET_FACTORY, "data": data}, "latest"],
+            "id": 1
         }))
         .send()
         .await
@@ -1615,10 +1692,104 @@ pub async fn get_existing_deposit_wallet(eoa_addr: &str) -> Option<String> {
         .await
         .ok()?;
 
-    let code = code_v["result"].as_str().unwrap_or("0x");
-    if code == "0x" || code.is_empty() { return None; }
+    if v.get("error").is_none() {
+        let hex_result = v["result"].as_str().unwrap_or("").trim_start_matches("0x");
+        if hex_result.len() >= 64 {
+            let addr_hex = &hex_result[hex_result.len() - 40..];
+            if !addr_hex.chars().all(|c| c == '0') {
+                let wallet_addr = format!("0x{}", addr_hex);
+                if let Ok(code_resp) = client
+                    .post(Urls::polygon_rpc())
+                    .json(&serde_json::json!({
+                        "jsonrpc": "2.0", "method": "eth_getCode",
+                        "params": [&wallet_addr, "latest"], "id": 2
+                    }))
+                    .send()
+                    .await
+                {
+                    if let Ok(cv) = code_resp.json::<serde_json::Value>().await {
+                        let code = cv["result"].as_str().unwrap_or("0x");
+                        if code != "0x" && !code.is_empty() {
+                            return Some(wallet_addr);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-    Some(wallet_addr)
+    // ── Pass 2: eth_getLogs chunked backwards scan ───────────────────────────
+    // Uses polygon_logs_rpc() (publicnode) which supports ≤7,998 block range.
+    // drpc free tier rejects eth_getLogs above ~7,500 blocks despite claiming 10,000.
+    const CHUNK_SIZE: u64 = 7_499; // safely under publicnode's actual ~7,998 limit
+    const MAX_SCAN_BLOCKS: u64 = 150_000; // ≈21 hours of Polygon @ 2 blocks/sec
+
+    // Use the logs RPC endpoint (publicnode) for both block number and getLogs queries
+    // so both calls go to the same reliable node — drpc free tier can silently fail eth_blockNumber.
+    let logs_rpc = Urls::polygon_logs_rpc();
+    let blk_body = serde_json::json!({"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1});
+    let current_block = client.post(&logs_rpc).json(&blk_body).send().await.ok()?
+        .json::<serde_json::Value>().await.ok()
+        .and_then(|v| v["result"].as_str()
+            .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
+        )?;
+    let padded_owner = format!("0x{:0>64}", eoa_addr.trim_start_matches("0x").to_lowercase());
+    let scan_stop = current_block.saturating_sub(MAX_SCAN_BLOCKS);
+
+    let mut to_block = current_block;
+    while to_block > scan_stop {
+        let from_block = to_block.saturating_sub(CHUNK_SIZE).max(scan_stop);
+        let logs_body = serde_json::json!({
+            "jsonrpc": "2.0", "method": "eth_getLogs",
+            "params": [{
+                "address": Contracts::DEPOSIT_WALLET_FACTORY,
+                "fromBlock": format!("0x{:x}", from_block),
+                "toBlock":   format!("0x{:x}", to_block),
+                "topics": [WALLET_CREATED_TOPIC, serde_json::Value::Null, &padded_owner]
+            }],
+            "id": 3
+        });
+        if let Ok(resp) = client.post(&logs_rpc).json(&logs_body).send().await {
+            if let Ok(lv) = resp.json::<serde_json::Value>().await {
+                // Ignore RPC errors (e.g. transient range exceeded) and try next chunk
+                if lv.get("error").is_none() {
+                    if let Some(logs) = lv["result"].as_array() {
+                        if let Some(log) = logs.last() {
+                            if let Some(topics) = log["topics"].as_array() {
+                                if topics.len() >= 2 {
+                                    let t1 = topics[1].as_str().unwrap_or("");
+                                    let hex = t1.trim_start_matches("0x");
+                                    if hex.len() >= 40 {
+                                        let wallet = format!("0x{}", &hex[hex.len() - 40..]);
+                                        // Verify code still present
+                                        if let Ok(cr) = client
+                                            .post(Urls::polygon_rpc())
+                                            .json(&serde_json::json!({
+                                                "jsonrpc": "2.0", "method": "eth_getCode",
+                                                "params": [&wallet, "latest"], "id": 4
+                                            }))
+                                            .send().await
+                                        {
+                                            if let Ok(cv) = cr.json::<serde_json::Value>().await {
+                                                let code = cv["result"].as_str().unwrap_or("0x");
+                                                if code != "0x" && !code.is_empty() {
+                                                    return Some(wallet);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if from_block == 0 || from_block == scan_stop { break; }
+        to_block = from_block.saturating_sub(1);
+    }
+
+    None
 }
 
 /// Compute the deterministic deposit wallet address for an EOA without deploying it.

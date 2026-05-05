@@ -15,7 +15,7 @@
 use anyhow::{bail, Result};
 use reqwest::Client;
 
-use crate::api::{get_wallet_nonce, relayer_wallet_batch, relayer_wallet_create, sync_balance_allowance_deposit_wallet};
+use crate::api::{get_builder_api_key, get_wallet_nonce, relayer_wallet_batch, relayer_wallet_create, sync_balance_allowance_deposit_wallet, WalletCreateResult};
 use crate::auth::ensure_credentials;
 use crate::config::{Contracts, TradingMode};
 use crate::onchainos::get_wallet_address;
@@ -62,37 +62,59 @@ async fn run_inner(dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
+    // ── Step 1b: derive builder credentials (needed for relayer auth) ─────────
+    // Builder credentials are derived from the user's CLOB API key via a single
+    // POST /auth/builder-api-key call — no Polymarket app or Builders Program needed.
+    eprintln!("[polymarket] Deriving builder credentials for relayer access...");
+    let clob_creds = ensure_credentials(&client, &owner_addr).await?;
+    let builder = get_builder_api_key(&client, &clob_creds, &owner_addr).await
+        .map_err(|e| anyhow::anyhow!(
+            "Could not derive builder credentials: {}. \
+             Ensure your CLOB API key is valid (run `polymarket balance` to verify).",
+            e
+        ))?;
+    eprintln!("[polymarket] Builder credentials obtained.");
+
     // ── Step 2: deploy wallet if not already deployed ─────────────────────────
     let wallet_addr = if let Some(addr) = existing {
         eprintln!("[polymarket] Skipping deploy — deposit wallet already exists.");
         addr
     } else {
-        eprintln!("[polymarket] Deploying deposit wallet...");
+        eprintln!("[polymarket] Deploying deposit wallet via relayer (WALLET-CREATE)...");
 
-        // Gasless deployment via the Polymarket relayer (WALLET-CREATE, no signature required).
+        // Gasless deployment via the Polymarket relayer (WALLET-CREATE, no user signature required).
         // The relayer pays gas and deploys a deterministic ERC-1967 proxy.
-        // Note: requires Polymarket builder authorization — regular EOAs cannot call the
-        // factory directly due to OnlyOperator access control.
-        match relayer_wallet_create(&client, &owner_addr).await {
-            Ok(addr) => {
-                eprintln!("[polymarket] Deposit wallet deployed: {}", addr);
+        // Builder auth (POLY_BUILDER_* headers) authorises the relayer to call the factory's
+        // OnlyOperator deploy() function on behalf of the EOA.
+        match relayer_wallet_create(&client, &owner_addr, &builder).await
+            .map_err(|e| anyhow::anyhow!("Deposit wallet deployment failed: {}", e))?
+        {
+            WalletCreateResult::Transaction(tx_hash) => {
+                // Fresh deployment — wait for tx, then extract wallet address from factory event
+                eprintln!("[polymarket] WALLET-CREATE submitted: {}", tx_hash);
+                eprintln!("[polymarket] Waiting for deployment tx to confirm...");
+                crate::onchainos::wait_for_wallet_create_receipt(&tx_hash, 120).await
+                    .map_err(|e| anyhow::anyhow!("Deposit wallet deploy confirmation failed: {}", e))?
+            }
+            WalletCreateResult::AlreadyDeployed(addr) => {
+                // Wallet already exists — relayer returned address directly
+                eprintln!("[polymarket] Deposit wallet already deployed (relayer confirmed): {}", addr);
                 addr
             }
-            Err(relayer_err) => {
-                // Compute predicted address so the user can receive funds now and deploy later
-                let predicted = crate::onchainos::predict_deposit_wallet_address(&owner_addr).await;
-                bail!(
-                    "Deposit wallet deployment failed: {}. \
-                     The factory requires Polymarket builder authorization (OnlyOperator). \
-                     To deploy your wallet, visit the Polymarket app (app.polymarket.com), \
-                     connect this wallet ({}), and complete the setup flow. \
-                     Then re-run `polymarket-plugin quickstart` to continue.{}",
-                    relayer_err,
-                    &owner_addr[..std::cmp::min(10, owner_addr.len())],
-                    predicted
-                        .map(|p| format!(" Your predicted wallet address: {}", p))
-                        .unwrap_or_default()
-                );
+            WalletCreateResult::Failed => {
+                // The relayer reports STATE_FAILED — this almost always means the factory
+                // reverted because a wallet already exists in the owner mapping.
+                // Try to find the existing wallet via event log scan (handles pre-upgrade deployments).
+                eprintln!("[polymarket] WALLET-CREATE returned STATE_FAILED — searching for existing wallet...");
+                crate::onchainos::get_existing_deposit_wallet(&owner_addr).await
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Deposit wallet deployment failed (STATE_FAILED) and no existing wallet \
+                         could be found in the last 150,000 blocks. \
+                         If you believe you already have a deposit wallet, check Polygonscan \
+                         for transactions from your address to the factory \
+                         (0x00000000000Fb5C9ADea0298D729A0CB3823Cc07) and re-run this command \
+                         with the wallet address stored in creds.json manually."
+                    ))?
             }
         }
     };
@@ -141,6 +163,7 @@ async fn run_inner(dry_run: bool) -> Result<()> {
         deadline,
         calls_json,
         &batch_sig,
+        &builder,
     ).await?;
 
     eprintln!("[polymarket] Approval batch submitted: {}", batch_tx);
@@ -150,12 +173,11 @@ async fn run_inner(dry_run: bool) -> Result<()> {
 
     // ── Step 5: sync CLOB balance-allowance ──────────────────────────────────
     eprintln!("[polymarket] Syncing CLOB balance-allowance (signature_type=3)...");
-    let creds = ensure_credentials(&client, &owner_addr).await?;
-    sync_balance_allowance_deposit_wallet(&client, &wallet_addr, &owner_addr, &creds).await
+    sync_balance_allowance_deposit_wallet(&client, &wallet_addr, &owner_addr, &clob_creds).await
         .unwrap_or_else(|e| eprintln!("[polymarket] Warning: balance sync failed ({}); retry with `polymarket balance`.", e));
 
     // ── Step 6: save mode + wallet address ───────────────────────────────────
-    let mut updated_creds = creds;
+    let mut updated_creds = clob_creds;
     updated_creds.deposit_wallet = Some(wallet_addr.clone());
     updated_creds.mode = TradingMode::DepositWallet;
     crate::config::save_credentials(&updated_creds)?;

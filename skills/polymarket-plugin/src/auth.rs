@@ -122,6 +122,42 @@ pub fn l2_headers(
     ])
 }
 
+// ─── Builder credentials ──────────────────────────────────────────────────────
+
+/// Credentials derived from `POST /auth/builder-api-key`.
+/// Used for authenticating relayer WALLET-CREATE and WALLET batch submissions.
+///
+/// Note: the builder endpoint returns `key` (not `apiKey` like the CLOB endpoint).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BuilderCredentials {
+    #[serde(rename = "key")]
+    pub api_key: String,
+    pub secret: String,
+    pub passphrase: String,
+}
+
+/// Build POLY_BUILDER_* headers for a relayer request.
+///
+/// Builder HMAC uses the same URL-safe base64 decoded secret and HMAC-SHA256
+/// algorithm as CLOB L2 auth — only the header names differ.
+pub fn builder_l2_headers(
+    api_key: &str,
+    secret: &str,
+    passphrase: &str,
+    method: &str,
+    path: &str,
+    body: &str,
+) -> Result<Vec<(String, String)>> {
+    let timestamp = chrono::Utc::now().timestamp() as u64;
+    let sig = hmac_signature(secret, timestamp, method, path, body)?;
+    Ok(vec![
+        ("POLY_BUILDER_API_KEY".to_string(), api_key.to_string()),
+        ("POLY_BUILDER_PASSPHRASE".to_string(), passphrase.to_string()),
+        ("POLY_BUILDER_SIGNATURE".to_string(), sig),
+        ("POLY_BUILDER_TIMESTAMP".to_string(), timestamp.to_string()),
+    ])
+}
+
 // ─── API key management ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
