@@ -18,7 +18,7 @@ use reqwest::Client;
 use crate::api::{get_builder_api_key, get_wallet_nonce, relayer_wallet_batch, relayer_wallet_create, sync_balance_allowance_deposit_wallet, WalletCreateResult};
 use crate::auth::ensure_credentials;
 use crate::config::{Contracts, TradingMode};
-use crate::onchainos::get_wallet_address;
+use crate::onchainos::{get_wallet_address, get_pusd_balance};
 use crate::signing::{sign_batch_via_onchainos, BatchParams, WalletCall};
 
 pub async fn run(dry_run: bool) -> Result<()> {
@@ -182,16 +182,26 @@ async fn run_inner(dry_run: bool) -> Result<()> {
     updated_creds.mode = TradingMode::DepositWallet;
     crate::config::save_credentials(&updated_creds)?;
 
+    let eoa_pusd = get_pusd_balance(&owner_addr).await.unwrap_or(0.0);
+
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "ok": true,
             "data": {
-                "owner":          owner_addr,
-                "deposit_wallet": wallet_addr,
-                "mode":           "deposit_wallet",
-                "approval_tx":    batch_tx,
-                "note": "Deposit wallet ready. Fund it with pUSD and trade with signature_type=3 (POLY_1271). All trading is gasless."
+                "owner":                owner_addr,
+                "eoa_pusd_balance":     eoa_pusd,
+                "deposit_wallet":       wallet_addr,
+                "mode":                 "deposit_wallet",
+                "approval_tx":          batch_tx,
+                "note": if eoa_pusd > 0.0 {
+                    format!(
+                        "Deposit wallet ready. Transfer {:.2} pUSD from your EOA to the deposit_wallet address, then retry your order.",
+                        eoa_pusd
+                    )
+                } else {
+                    "Deposit wallet ready. Fund it with pUSD and trade with signature_type=3 (POLY_1271). All trading is gasless.".to_string()
+                }
             }
         }))?
     );

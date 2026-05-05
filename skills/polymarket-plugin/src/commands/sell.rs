@@ -7,8 +7,8 @@ use crate::api::{
     OrderRequest, OrderRequestV2,
 };
 use crate::auth::ensure_credentials;
-use crate::config::OrderVersion;
-use crate::onchainos::{get_wallet_address, is_ctf_approved_for_all};
+use crate::config::{OrderVersion, TradingMode};
+use crate::onchainos::{get_wallet_address, get_pusd_balance, is_ctf_approved_for_all};
 use crate::series;
 use crate::signing::{sign_order_v2_via_onchainos, sign_order_v2_poly1271_via_onchainos, sign_order_via_onchainos, OrderParams,
     OrderParamsV2, BYTES32_ZERO};
@@ -542,6 +542,40 @@ async fn run_inner(
 
     if resp.success != Some(true) {
         let msg = resp.error_msg.as_deref().unwrap_or("unknown error");
+        let msg_lower = msg.to_lowercase();
+
+        // ── Deposit wallet migration (V2 maker allowlist) ─────────────────────
+        if msg_lower.contains("maker address not allowed") || msg_lower.contains("deposit wallet") {
+            let pusd = get_pusd_balance(&maker_addr).await.unwrap_or(0.0);
+            let mode_str = match &effective_mode {
+                TradingMode::Eoa => "eoa",
+                TradingMode::PolyProxy => "proxy",
+                TradingMode::DepositWallet => "deposit_wallet",
+            };
+            let transfer_step = if pusd > 0.0 {
+                format!("3. Transfer {:.2} pUSD from {} to the deposit_wallet address", pusd, maker_addr)
+            } else {
+                "3. Fund the deposit wallet with pUSD (transfer from your source of funds)".to_string()
+            };
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "error": "Deposit wallet required — V2 exchange does not accept this maker address.",
+                "migration_required": true,
+                "migration": {
+                    "current_mode": mode_str,
+                    "trading_address": maker_addr,
+                    "pusd_at_trading_address": pusd,
+                    "next_steps": [
+                        "1. Run: polymarket setup-deposit-wallet",
+                        "2. Note the deposit_wallet address in the output",
+                        transfer_step,
+                        "4. Retry your order — plugin will automatically use deposit wallet mode"
+                    ]
+                }
+            })).unwrap_or_default());
+            return Ok(());
+        }
+
         if msg.to_uppercase().contains("INVALID_ORDER_MIN_SIZE") {
             bail!(
                 "Order rejected by CLOB: amount is below this market's minimum order size. \

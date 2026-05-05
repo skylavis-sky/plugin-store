@@ -1079,9 +1079,9 @@ polymarket setup-proxy
 
 ---
 
-### `setup-deposit-wallet` — Create a Deposit Wallet (New User Onboarding)
+### `setup-deposit-wallet` — Create a Deposit Wallet (New & Migrating Users)
 
-Deploy an ERC-1967 deposit wallet and switch to DEPOSIT_WALLET mode. Designed for new Polymarket accounts created after the deposit wallet migration. Fully gasless — the Polymarket relayer pays all deployment and approval gas.
+Deploy an ERC-1967 deposit wallet and switch to DEPOSIT_WALLET mode. Required for new Polymarket accounts and for existing EOA/PolyProxy users whose orders are now rejected by the V2 exchange with "maker address not allowed". Fully gasless — the Polymarket relayer pays all deployment and approval gas.
 
 ```
 polymarket-plugin setup-deposit-wallet [--dry-run]
@@ -1108,7 +1108,7 @@ polymarket-plugin setup-deposit-wallet [--dry-run]
 5. Calls `GET /balance-allowance/update?signature_type=3` to sync CLOB collateral state
 6. Saves deposit wallet address + `TradingMode::DepositWallet` to `~/.config/polymarket/creds.json`
 
-**Output fields:** `ok`, `data.deposit_wallet`, `data.eoa`, `data.tx_hash` (deploy tx), `data.batch_tx_hash` (approval batch tx), `data.mode`, `data.note`
+**Output fields:** `ok`, `data.owner`, `data.eoa_pusd_balance`, `data.deposit_wallet`, `data.mode`, `data.approval_tx`, `data.note`
 
 **User detection (automatic — no manual choice needed):**
 The plugin auto-detects which mode a user should use:
@@ -1119,13 +1119,52 @@ The plugin auto-detects which mode a user should use:
 
 If `quickstart` or `buy` redirects you to `setup-deposit-wallet`, run it — it handles all setup in one command.
 
-**After setup:** Send pUSD or USDC.e to the deposit wallet address shown in the output. Then trade normally — all `buy`, `sell`, `rfq` commands automatically use DEPOSIT_WALLET mode.
+**After setup:** Send pUSD to the deposit wallet address shown in the output (`data.deposit_wallet`). The `eoa_pusd_balance` field shows how much pUSD is currently at your EOA — transfer that amount to the deposit wallet address. Then trade normally — all `buy`, `sell`, `rfq` commands automatically use DEPOSIT_WALLET mode.
 
 **Example:**
 ```bash
 polymarket-plugin setup-deposit-wallet --dry-run
 polymarket-plugin setup-deposit-wallet
 ```
+
+---
+
+### Migration: EOA/Proxy → Deposit Wallet
+
+**Trigger:** `buy` or `sell` returns `"migration_required": true` in the response JSON.
+
+Polymarket's V2 exchange only accepts orders where the maker is an approved deposit wallet address. If your current trading address (EOA or PolyProxy) is on the V2 blocklist, every order will be rejected with "maker address not allowed". This is a platform-level migration, not a plugin bug.
+
+**Migration JSON output** (from `buy` or `sell`):
+```json
+{
+  "ok": false,
+  "error": "Deposit wallet required — V2 exchange does not accept this maker address.",
+  "migration_required": true,
+  "migration": {
+    "current_mode": "eoa",
+    "trading_address": "0x...",
+    "pusd_at_trading_address": 12.50,
+    "next_steps": [
+      "1. Run: polymarket setup-deposit-wallet",
+      "2. Note the deposit_wallet address in the output",
+      "3. Transfer 12.50 pUSD from 0x... to the deposit_wallet address",
+      "4. Retry your order — plugin will automatically use deposit wallet mode"
+    ]
+  }
+}
+```
+
+**Agent auto-flow when `migration_required: true` is detected:**
+1. Run `polymarket setup-deposit-wallet` — this deploys the deposit wallet, sets all 5 approvals, and saves `mode: deposit_wallet` to `creds.json`. No gas needed.
+2. Read `data.deposit_wallet` from the output — that is the new trading address.
+3. If `data.eoa_pusd_balance > 0`: transfer that amount of pUSD from the EOA (`data.owner`) to `data.deposit_wallet`. Use onchainos wallet transfer or pUSD contract `transfer()` call.
+4. Re-run the original `buy` or `sell` command unchanged — it will now use deposit wallet mode automatically.
+
+**Notes:**
+- The migration is one-time per account. Once `creds.json` has `mode: deposit_wallet`, all subsequent orders use deposit wallet signing automatically.
+- If the user has CTF outcome tokens (open positions) at the EOA or proxy address, those can still be sold from the original address using `--mode eoa` or `--mode proxy` override. The deposit wallet migration does not affect existing open positions.
+- pUSD (Polymarket USD) is the collateral token on Polygon. Contract: `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`. Users may also hold USDC.e — if so, it must be wrapped to pUSD first via the Polymarket USDC→pUSD wrap before transferring.
 
 ---
 
