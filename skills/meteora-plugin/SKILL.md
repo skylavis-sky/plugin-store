@@ -32,7 +32,7 @@ if [ -f "$UPDATE_CACHE" ]; then
 fi
 
 if [ "$DO_CHECK" = true ]; then
-  REMOTE_VER=$(curl -sf --max-time 3 "https://raw.githubusercontent.com/mig-pre/plugin-store/main/skills/meteora-plugin/plugin.yaml" | grep '^version' | head -1 | tr -d '"' | awk '{print $2}')
+  REMOTE_VER=$(curl -sf --max-time 3 "https://raw.githubusercontent.com/skylavis-sky/plugin-store/main/skills/meteora-plugin/plugin.yaml" | grep '^version' | head -1 | tr -d '"' | awk '{print $2}')
   if [ -n "$REMOTE_VER" ]; then
     mkdir -p "$HOME/.plugin-store/update-cache"
     echo "$REMOTE_VER" > "$UPDATE_CACHE"
@@ -42,7 +42,7 @@ fi
 REMOTE_VER=$(cat "$UPDATE_CACHE" 2>/dev/null || echo "$LOCAL_VER")
 if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then
   echo "Update available: meteora-plugin v$LOCAL_VER -> v$REMOTE_VER. Updating..."
-  npx skills add mig-pre/plugin-store --skill meteora-plugin --yes --global 2>/dev/null || true
+  npx skills add skylavis-sky/plugin-store --skill meteora-plugin --yes --global 2>/dev/null || true
   echo "Updated meteora-plugin to v$REMOTE_VER. Please re-read this SKILL.md."
 fi
 ```
@@ -93,7 +93,7 @@ fi
 npx skills add okx/onchainos-skills --yes --global
 
 # 3. Install plugin-store skills (enables plugin discovery and management)
-npx skills add mig-pre/plugin-store --skill plugin-store --yes --global
+npx skills add skylavis-sky/plugin-store --skill plugin-store --yes --global
 ```
 
 ### Install meteora-plugin binary + launcher (auto-injected)
@@ -104,11 +104,11 @@ LAUNCHER="$HOME/.plugin-store/launcher.sh"
 CHECKER="$HOME/.plugin-store/update-checker.py"
 if [ ! -f "$LAUNCHER" ]; then
   mkdir -p "$HOME/.plugin-store"
-  curl -fsSL "https://raw.githubusercontent.com/mig-pre/plugin-store/main/scripts/launcher.sh" -o "$LAUNCHER" 2>/dev/null || true
+  curl -fsSL "https://raw.githubusercontent.com/skylavis-sky/plugin-store/main/scripts/launcher.sh" -o "$LAUNCHER" 2>/dev/null || true
   chmod +x "$LAUNCHER"
 fi
 if [ ! -f "$CHECKER" ]; then
-  curl -fsSL "https://raw.githubusercontent.com/mig-pre/plugin-store/main/scripts/update-checker.py" -o "$CHECKER" 2>/dev/null || true
+  curl -fsSL "https://raw.githubusercontent.com/skylavis-sky/plugin-store/main/scripts/update-checker.py" -o "$CHECKER" 2>/dev/null || true
 fi
 
 # Clean up old installation
@@ -133,7 +133,7 @@ mkdir -p ~/.local/bin
 
 # Download binary + checksums to a sandbox, verify SHA256 before installing.
 BIN_TMP=$(mktemp -d)
-RELEASE_BASE="https://github.com/mig-pre/plugin-store/releases/download/plugins/meteora-plugin@0.3.9"
+RELEASE_BASE="https://github.com/skylavis-sky/plugin-store/releases/download/plugins/meteora-plugin@0.3.9"
 curl -fsSL "${RELEASE_BASE}/meteora-plugin-${TARGET}${EXT}" -o "$BIN_TMP/meteora-plugin${EXT}" || {
   echo "ERROR: failed to download meteora-plugin-${TARGET}${EXT}" >&2
   rm -rf "$BIN_TMP"; exit 1; }

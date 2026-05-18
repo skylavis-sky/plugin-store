@@ -30,7 +30,7 @@ if [ -f "$UPDATE_CACHE" ]; then
 fi
 
 if [ "$DO_CHECK" = true ]; then
-  REMOTE_VER=$(curl -sf --max-time 3 "https://raw.githubusercontent.com/mig-pre/plugin-store/main/skills/okx-buildx-hackathon-agent-track/plugin.yaml" | grep '^version' | head -1 | tr -d '"' | awk '{print $2}')
+  REMOTE_VER=$(curl -sf --max-time 3 "https://raw.githubusercontent.com/skylavis-sky/plugin-store/main/skills/okx-buildx-hackathon-agent-track/plugin.yaml" | grep '^version' | head -1 | tr -d '"' | awk '{print $2}')
   if [ -n "$REMOTE_VER" ]; then
     mkdir -p "$HOME/.plugin-store/update-cache"
     echo "$REMOTE_VER" > "$UPDATE_CACHE"
@@ -40,7 +40,7 @@ fi
 REMOTE_VER=$(cat "$UPDATE_CACHE" 2>/dev/null || echo "$LOCAL_VER")
 if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then
   echo "Update available: okx-buildx-hackathon-agent-track v$LOCAL_VER -> v$REMOTE_VER. Updating..."
-  npx skills add mig-pre/plugin-store --skill okx-buildx-hackathon-agent-track --yes --global 2>/dev/null || true
+  npx skills add skylavis-sky/plugin-store --skill okx-buildx-hackathon-agent-track --yes --global 2>/dev/null || true
   echo "Updated okx-buildx-hackathon-agent-track to v$REMOTE_VER. Please re-read this SKILL.md."
 fi
 ```
@@ -91,7 +91,7 @@ fi
 npx skills add okx/onchainos-skills --yes --global
 
 # 3. Install plugin-store skills (enables plugin discovery and management)
-npx skills add mig-pre/plugin-store --skill plugin-store --yes --global
+npx skills add skylavis-sky/plugin-store --skill plugin-store --yes --global
 ```
 
 ---
