@@ -1,7 +1,7 @@
 ---
 name: sorin-skill
 description: Use when the user asks crypto-related questions about a token, pool, chain, protocol, or project and the agent should answer with Sorin's DeFi gateway using clear, data-backed analysis.
-version: "1.0.0"
+version: "1.0.1"
 author: Sahara AI
 tags:
   - defi
@@ -24,7 +24,7 @@ tags:
 # Check for skill updates (1-hour cache)
 UPDATE_CACHE="$HOME/.plugin-store/update-cache/sorin-skill"
 CACHE_MAX=3600
-LOCAL_VER="1.0.0"
+LOCAL_VER="1.0.1"
 DO_CHECK=true
 
 if [ -f "$UPDATE_CACHE" ]; then
@@ -35,7 +35,7 @@ if [ -f "$UPDATE_CACHE" ]; then
 fi
 
 if [ "$DO_CHECK" = true ]; then
-  REMOTE_VER=$(curl -sf --max-time 3 "https://raw.githubusercontent.com/skylavis-sky/plugin-store/main/skills/sorin-skill/plugin.yaml" | grep '^version' | head -1 | tr -d '"' | awk '{print $2}')
+  REMOTE_VER=$(curl -sf --max-time 3 "https://raw.githubusercontent.com/mig-pre/plugin-store/main/skills/sorin-skill/plugin.yaml" | grep '^version' | head -1 | tr -d '"' | awk '{print $2}')
   if [ -n "$REMOTE_VER" ]; then
     mkdir -p "$HOME/.plugin-store/update-cache"
     echo "$REMOTE_VER" > "$UPDATE_CACHE"
@@ -45,7 +45,7 @@ fi
 REMOTE_VER=$(cat "$UPDATE_CACHE" 2>/dev/null || echo "$LOCAL_VER")
 if [ "$REMOTE_VER" != "$LOCAL_VER" ]; then
   echo "Update available: sorin-skill v$LOCAL_VER -> v$REMOTE_VER. Updating..."
-  npx skills add skylavis-sky/plugin-store --skill sorin-skill --yes --global 2>/dev/null || true
+  npx skills add mig-pre/plugin-store --skill sorin-skill --yes --global 2>/dev/null || true
   echo "Updated sorin-skill to v$REMOTE_VER. Please re-read this SKILL.md."
 fi
 ```
@@ -62,7 +62,7 @@ It identifies the user's intent, selects the most relevant gateway endpoint, and
 
 ## Gateway
 
-- Base URL: `https://defi-tools-proxy.saharaa.info`
+- Base URL: `https://tools.saharaai.com/api`
 - API key env var: `DEFI_TOOLS_API_KEY`
 - Auth header: `Authorization: Bearer ${DEFI_TOOLS_API_KEY}`
 - Accept header: `accept: text/plain`
@@ -70,7 +70,7 @@ It identifies the user's intent, selects the most relevant gateway endpoint, and
 Default request template:
 
 ```bash
-GET https://defi-tools-proxy.saharaa.info/<path>?<query>
+GET https://tools.saharaai.com/api/<path>?<query>
 Headers:
 accept: text/plain
 Authorization: Bearer ${DEFI_TOOLS_API_KEY}
@@ -79,7 +79,7 @@ Authorization: Bearer ${DEFI_TOOLS_API_KEY}
 Pool analysis example:
 
 ```bash
-GET https://defi-tools-proxy.saharaa.info/pool/analysis?chain=Ethereum
+GET https://tools.saharaai.com/api/pool/analysis?chain=Ethereum
 Headers:
 accept: text/plain
 Authorization: Bearer ${DEFI_TOOLS_API_KEY}
@@ -112,7 +112,7 @@ Authorization: Bearer ${DEFI_TOOLS_API_KEY}
 - Request:
 
 ```bash
-GET https://defi-tools-proxy.saharaa.info/token/analysis?token_symbol=ETH&quote_currency=USDT
+GET https://tools.saharaai.com/api/token/analysis?token_symbol=ETH&quote_currency=USDT
 Headers:
 accept: text/plain
 Authorization: Bearer ${DEFI_TOOLS_API_KEY}
@@ -132,7 +132,7 @@ Authorization: Bearer ${DEFI_TOOLS_API_KEY}
 - Request:
 
 ```bash
-GET https://defi-tools-proxy.saharaa.info/pool/analysis?chain=Ethereum&protocol=lido&token_symbol=ETH
+GET https://tools.saharaai.com/api/pool/analysis?chain=Ethereum&protocol=lido&token_symbol=ETH
 Headers:
 accept: text/plain
 Authorization: Bearer ${DEFI_TOOLS_API_KEY}
@@ -148,7 +148,7 @@ Authorization: Bearer ${DEFI_TOOLS_API_KEY}
 - Request:
 
 ```bash
-GET https://defi-tools-proxy.saharaa.info/chain/analysis?chainName=Ethereum
+GET https://tools.saharaai.com/api/chain/analysis?chainName=Ethereum
 Headers:
 accept: text/plain
 Authorization: Bearer ${DEFI_TOOLS_API_KEY}
@@ -161,7 +161,7 @@ Authorization: Bearer ${DEFI_TOOLS_API_KEY}
 - Request:
 
 ```bash
-GET https://defi-tools-proxy.saharaa.info/protocol/analysis?protocol=aave
+GET https://tools.saharaai.com/api/protocol/analysis?protocol=aave
 Headers:
 accept: text/plain
 Authorization: Bearer ${DEFI_TOOLS_API_KEY}
@@ -176,7 +176,7 @@ Authorization: Bearer ${DEFI_TOOLS_API_KEY}
 - Request:
 
 ```bash
-GET https://defi-tools-proxy.saharaa.info/project/analysis?projectName=berachain
+GET https://tools.saharaai.com/api/project/analysis?projectName=berachain
 Headers:
 accept: text/plain
 Authorization: Bearer ${DEFI_TOOLS_API_KEY}
